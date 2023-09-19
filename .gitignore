@@ -1,0 +1,4 @@
+.vs/
+out/
+# no eigen for now
+eigen-3.4.0
