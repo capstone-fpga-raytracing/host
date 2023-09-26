@@ -2,22 +2,40 @@
 #include "defs.hpp"
 #include <iostream>
 #include <sstream>
+#include <cstdio>
 
+#include "cxxopts/cxxopts.hpp"
 
 int main(int argc, char** argv)
 {
-    // round-trip test
-    ModelGeom geom;
-    if (!read_obj_model("sphere.obj", geom))
+    cxxopts::Options opts("host", "Host-side of FPGA raytracer.");
+    opts.add_options()
+        ("h,help", "Show usage.")
+        ("f,file", "Input model file (.obj).", cxxopts::value<std::string>(), "<file>");
+
+    auto res = opts.parse(argc, argv);
+    if (res["help"].as<bool>())
     {
-        std::cerr << "read model failed";
-        return EXIT_FAILURE;
-    }        
-    if (!write_obj_model("sphere_copy.obj", geom))
+        std::cout << opts.help() << std::endl;
+        return EXIT_SUCCESS;
+    }
+    if (res["file"].count() == 0)
     {
-        std::cerr << "write model failed";
+        std::cerr << "error: no input file.\n";
         return EXIT_FAILURE;
     }
+
+    auto model_path = res["file"].as<std::string>();
+
+    ModelData model;
+    if (!read_model(model_path.c_str(), nullptr, model))
+    {
+        std::cerr << "error: failed to read model file\n";
+        return EXIT_FAILURE;
+    }
+
+    BVTree tree(model);
+    // todo: serialize bvtree 
 
     return 0;
 }

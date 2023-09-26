@@ -5,10 +5,11 @@
 
 #include "defs.hpp"
 
+
 // does not check file for errors!
-bool read_obj_model(const char* filename, ModelGeom& m)
+bool read_model(const char* obj_file, const char* mtl_file, ModelData& m)
 {
-    std::ifstream file(filename);
+    std::ifstream file(obj_file);
     if (!file)
         return false;
 
@@ -23,17 +24,17 @@ bool read_obj_model(const char* filename, ModelGeom& m)
 
         if (line.starts_with("v "))
         {
-            xyz v;
+            vec3 v;
             is.str(line.substr(2));
-            is >> v.x >> v.y >> v.z;
+            is >> v.x() >> v.y() >> v.z();
 
             is >> std::ws; // set eof
             if (!is.eof())
             {
                 float w; is >> w;
                 if (w != 1.0f) {
-                    std::cerr << "error on line " << line_num;
-                    std::cerr << ": got 4d vertex" << std::endl;
+                    std::cerr << "line " << line_num;
+                    std::cerr << ": got 4d vertex\n";
                     return false;
                 }
             }
@@ -54,8 +55,8 @@ bool read_obj_model(const char* filename, ModelGeom& m)
                 {
                     float w; is >> w;
                     if (w != 0.0f) {
-                        std::cerr << "error on line " << line_num;
-                        std::cerr << ": got 3d texture" << std::endl;
+                        std::cerr << "line " << line_num;
+                        std::cerr << ": got 3d texture\n";
                         return false;
                     }
                 }
@@ -66,9 +67,9 @@ bool read_obj_model(const char* filename, ModelGeom& m)
         }
         else if (line.starts_with("vn "))
         {
-            xyz n;
+            vec3 n;
             is.str(line.substr(3));
-            is >> n.x >> n.y >> n.z;
+            is >> n.x() >> n.y() >> n.z();
 
             n.normalize();
             m.NV.push_back(n);
@@ -83,6 +84,7 @@ bool read_obj_model(const char* filename, ModelGeom& m)
             auto extract_face_vert =
                 [](std::istream& is, int& fi, int& ufi, int& nfi)
                 {
+                    // format: vertex/texture/normal (1-indexed)
                     is >> fi;
                     if (is.peek() == '/')
                     {
@@ -122,8 +124,8 @@ bool read_obj_model(const char* filename, ModelGeom& m)
             is >> std::ws;
             if (!is.eof())
             {
-                std::cerr << "error on line " << line_num;
-                std::cerr << ": got face with more than 4 verts" << std::endl;
+                std::cerr << "line " << line_num;
+                std::cerr << ": got face with more than 4 verts\n";
                 return false;
             }
 
@@ -133,15 +135,15 @@ bool read_obj_model(const char* filename, ModelGeom& m)
 
             if (f3 != -1)
             {
-                // convert quad to two triangles
+                // convert quad into two triangles
                 m.F.push_back({ f[0], f[2], f3 });
                 m.UF.push_back({ uf[0], uf[2], uf3 });
                 m.NF.push_back({ nf[0], nf[2], nf3 });
             }
         }
         else {
-            std::cerr << "error on line " << line_num;
-            std::cerr << ": unrecognized syntax" << std::endl;
+            std::cerr << "line " << line_num;
+            std::cerr << ": unrecognized syntax\n";
             return false;
         }
 
@@ -149,37 +151,31 @@ bool read_obj_model(const char* filename, ModelGeom& m)
         line_num++;
     }
 
-    if (m.V.size() != m.NV.size()) {
-        std::cerr << "error: num vertices does not match num normals" << std::endl;
-        return false;
-    }
-
     return true;
 }
 
 
-bool write_obj_model(const char* filename, ModelGeom& m)
+bool write_model(const char* obj_file, const char* mtl_file, ModelData& m)
 {
-    if (m.V.size() != m.NV.size() || 
-        m.UF.size() != m.F.size() || 
+    if (m.UF.size() != m.F.size() || 
         m.NF.size() != m.F.size()) 
     {
-        std::cerr << "error: invalid geometry" << std::endl;
+        std::cerr << "error: invalid geometry\n";
         return false;
     }
 
-    std::ofstream file(filename);
+    std::ofstream file(obj_file);
     if (!file)
         return false;
 
     for (std::size_t i = 0; i < m.V.size(); ++i)
-        file << "v " << m.V[i].x << " " << m.V[i].y << " " << m.V[i].z << "\n";
+        file << "v " << m.V[i].x() << " " << m.V[i].y() << " " << m.V[i].z() << "\n";
 
     for (std::size_t i = 0; i < m.UV.size(); ++i)
         file << "vt " << m.UV[i].u << " " << m.UV[i].v << "\n";
 
     for (std::size_t i = 0; i < m.NV.size(); ++i)
-        file << "vn " << m.NV[i].x << " " << m.NV[i].y << " " << m.NV[i].z << "\n";
+        file << "vn " << m.NV[i].x() << " " << m.NV[i].y() << " " << m.NV[i].z() << "\n";
 
     // format: vertex/texture/normal (1-indexed)
     for (std::size_t irow = 0; irow < m.F.size(); ++irow)
