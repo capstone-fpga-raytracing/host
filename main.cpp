@@ -28,13 +28,16 @@ int main(int argc, char** argv)
     auto model_path = res["file"].as<std::string>();
 
     ModelData model;
-    if (!read_model(model_path.c_str(), nullptr, model))
+    if (!read_wavefront_model(model_path.c_str(), nullptr, model))
     {
         std::cerr << "error: failed to read model file\n";
         return EXIT_FAILURE;
     }
 
-    BVTree tree(model);
+    byte* serbuf = new byte[model.nsbytes()];
+    model.serialize(serbuf);
+
+    //BVTree tree(model);
     // todo: serialize bvtree 
 
     return 0;

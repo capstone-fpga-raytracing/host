@@ -1,3 +1,6 @@
+// https://en.wikipedia.org/wiki/Wavefront_.obj_file
+
+#include <cassert>
 #include <string>
 #include <sstream>
 #include <iostream>
@@ -7,7 +10,7 @@
 
 
 // does not check file for errors!
-bool read_model(const char* obj_file, const char* mtl_file, ModelData& m)
+bool read_wavefront_model(const char* obj_file, const char* mtl_file, ModelData& m)
 {
     std::ifstream file(obj_file);
     if (!file)
@@ -77,7 +80,7 @@ bool read_model(const char* obj_file, const char* mtl_file, ModelData& m)
         else if (line.starts_with("f "))
         {
             std::array<int, 3> f, uf, nf;
-            int f3 = -1, uf3 = -1, nf3 = -1; // extra, for quad
+            int f3 = 0, uf3 = 0, nf3 = 0;
             is.str(line.substr(2));
 
             // horrible
@@ -105,10 +108,9 @@ bool read_model(const char* obj_file, const char* mtl_file, ModelData& m)
                             else nfi = 0;
                         }
                     } else {
-                        ufi = 0;
+                        ufi = 0; // will be set to -1 later
                         nfi = 0;
                     }
-                    fi--; ufi--; nfi--; // was 1-indexed
                 };
 
             extract_face_vert(is, f[0], uf[0], nf[0]);
@@ -133,7 +135,7 @@ bool read_model(const char* obj_file, const char* mtl_file, ModelData& m)
             m.UF.push_back(uf);
             m.NF.push_back(nf);
 
-            if (f3 != -1)
+            if (f3 != 0)
             {
                 // convert quad into two triangles
                 m.F.push_back({ f[0], f[2], f3 });
@@ -151,11 +153,30 @@ bool read_model(const char* obj_file, const char* mtl_file, ModelData& m)
         line_num++;
     }
 
+    assert(m.UF.size() == m.F.size() && m.NF.size() == m.F.size());
+
+    // make face indices 0-indexed and wrap-around negative indices
+    for (int i = 0; i < m.F.size(); ++i)
+    {
+        for (int j = 0; j < 3; ++j)
+        {
+            auto& fi = m.F[i][j];
+            auto& ufi = m.UF[i][j];
+            auto& nfi = m.NF[i][j];
+
+            fi = fi < 0 ? fi + int(m.V.size()) : fi - 1;
+            ufi = ufi < 0 ? ufi + int(m.UV.size()) : ufi - 1;
+            nfi = nfi < 0 ? nfi + int(m.NV.size()) : nfi - 1;
+
+            // todo: fix missing normals or report an error 
+        }
+    }
+
     return true;
 }
 
 
-bool write_model(const char* obj_file, const char* mtl_file, ModelData& m)
+bool write_wavefront_model(const char* obj_file, const char* mtl_file, ModelData& m)
 {
     if (m.UF.size() != m.F.size() || 
         m.NF.size() != m.F.size()) 

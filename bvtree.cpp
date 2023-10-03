@@ -3,13 +3,12 @@
 #include <ranges>
 #include "defs.hpp"
 
-namespace ranges = std::ranges;
 using BVNodesConstItr = std::vector<BVNode*>::const_iterator;
 
-BVNode* make_bvtree(BVNodesConstItr tris_beg, BVNodesConstItr tris_end);
+static BVNode* make_bvtree(BVNodesConstItr tris_beg, BVNodesConstItr tris_end);
 
 
-BBox tri_bbox(const std::vector<vec3>& V, const std::array<int, 3>& tri)
+static BBox tri_bbox(const std::vector<vec3>& V, const std::array<int, 3>& tri)
 {
     BBox bb;
     for (int i = 0; i < 3; ++i)
@@ -20,7 +19,7 @@ BBox tri_bbox(const std::vector<vec3>& V, const std::array<int, 3>& tri)
     return bb;
 }
 
-BBox nodes_bbox(BVNodesConstItr begin, BVNodesConstItr end)
+static BBox nodes_bbox(BVNodesConstItr begin, BVNodesConstItr end)
 {
     BBox bb;
     for (auto it = begin; it != end; ++it)
@@ -32,7 +31,7 @@ BBox nodes_bbox(BVNodesConstItr begin, BVNodesConstItr end)
     return bb;
 }
 
-BVNode* get_subtree(BVNodesConstItr tris_beg, BVNodesConstItr tris_end)
+static BVNode* get_subtree(BVNodesConstItr tris_beg, BVNodesConstItr tris_end)
 {
     switch (std::distance(tris_beg, tris_end))
     {
@@ -42,7 +41,7 @@ BVNode* get_subtree(BVNodesConstItr tris_beg, BVNodesConstItr tris_end)
     }
 }
 
-BVNode* make_bvtree(BVNodesConstItr tris_beg, BVNodesConstItr tris_end)
+static BVNode* make_bvtree(BVNodesConstItr tris_beg, BVNodesConstItr tris_end)
 {
     BVNode* root = new BVNode();
     root->tri = -1; // bbox node
@@ -60,6 +59,21 @@ BVNode* make_bvtree(BVNodesConstItr tris_beg, BVNodesConstItr tris_end)
     root->right = get_subtree(sortedtris.begin() + lhs_size, sortedtris.end());
 
     return root;
+}
+
+static std::size_t nsbytes(BVNode* root)
+{
+    if (!root) return 0;
+    
+    std::size_t nbytes = 0;
+    if (root->tri == -1)
+    {
+
+    }
+
+    nbytes += nsbytes(root->left);
+    nbytes += nsbytes(root->right);
+    return nbytes;
 }
 
 BVTree::BVTree(const ModelData& m)
