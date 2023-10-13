@@ -10,7 +10,7 @@
 
 
 // does not check file for errors!
-bool read_wavefront_model(const char* obj_file, const char* mtl_file, ModelData& m)
+bool read_model(const char* obj_file, ModelData& m)
 {
     std::ifstream file(obj_file);
     if (!file)
@@ -37,7 +37,7 @@ bool read_wavefront_model(const char* obj_file, const char* mtl_file, ModelData&
                 float w; is >> w;
                 if (w != 1.0f) {
                     std::cerr << "line " << line_num;
-                    std::cerr << ": got 4d vertex\n";
+                    std::cerr << ": vertex is not 3D\n";
                     return false;
                 }
             }
@@ -59,7 +59,7 @@ bool read_wavefront_model(const char* obj_file, const char* mtl_file, ModelData&
                     float w; is >> w;
                     if (w != 0.0f) {
                         std::cerr << "line " << line_num;
-                        std::cerr << ": got 3d texture\n";
+                        std::cerr << ": tex coord is not 2D\n";
                         return false;
                     }
                 }
@@ -83,11 +83,10 @@ bool read_wavefront_model(const char* obj_file, const char* mtl_file, ModelData&
             int f3 = 0, uf3 = 0, nf3 = 0;
             is.str(line.substr(2));
 
-            // horrible
+            // format: vertex/texture/normal (1-indexed)
             auto extract_face_vert =
                 [](std::istream& is, int& fi, int& ufi, int& nfi)
                 {
-                    // format: vertex/texture/normal (1-indexed)
                     is >> fi;
                     if (is.peek() == '/')
                     {
@@ -108,7 +107,7 @@ bool read_wavefront_model(const char* obj_file, const char* mtl_file, ModelData&
                             else nfi = 0;
                         }
                     } else {
-                        ufi = 0; // will be set to -1 later
+                        ufi = 0; // set to -1 later
                         nfi = 0;
                     }
                 };
@@ -117,17 +116,24 @@ bool read_wavefront_model(const char* obj_file, const char* mtl_file, ModelData&
             extract_face_vert(is, f[1], uf[1], nf[1]);
             extract_face_vert(is, f[2], uf[2], nf[2]);
 
-            is >> std::ws; // set eof
+            is >> std::ws;
             if (!is.eof()) {
                 // this is a quad
                 extract_face_vert(is, f3, uf3, nf3);
+            }
+
+            if (nf[0] == 0 || nf[1] == 0 || nf[2] == 0 || nf3 == 0)
+            {
+                std::cerr << "line " << line_num;
+                std::cerr << ": face has missing normal\n";
+                return false;
             }
 
             is >> std::ws;
             if (!is.eof())
             {
                 std::cerr << "line " << line_num;
-                std::cerr << ": got face with more than 4 verts\n";
+                std::cerr << ": face has more than 4 verts\n";
                 return false;
             }
 
@@ -155,7 +161,9 @@ bool read_wavefront_model(const char* obj_file, const char* mtl_file, ModelData&
 
     assert(m.UF.size() == m.F.size() && m.NF.size() == m.F.size());
 
-    // make face indices 0-indexed and wrap-around negative indices
+    // make faces 0-indexed, 
+    // wrap around negative indices, 
+    // set invalid indices (0) to -1
     for (int i = 0; i < m.F.size(); ++i)
     {
         for (int j = 0; j < 3; ++j)
@@ -167,16 +175,18 @@ bool read_wavefront_model(const char* obj_file, const char* mtl_file, ModelData&
             fi = fi < 0 ? fi + int(m.V.size()) : fi - 1;
             ufi = ufi < 0 ? ufi + int(m.UV.size()) : ufi - 1;
             nfi = nfi < 0 ? nfi + int(m.NV.size()) : nfi - 1;
-
-            // todo: fix missing normals or report an error 
         }
     }
 
+    // for now. todo: read mtl file
+    m.M.push_back(mat::default_mat());
+    for (int i = 0; i < m.F.size(); ++i)
+        m.MF.push_back(0);
+   
     return true;
 }
 
-
-bool write_wavefront_model(const char* obj_file, const char* mtl_file, ModelData& m)
+bool write_model(const char* obj_file, const char* mtl_file, ModelData& m)
 {
     if (m.UF.size() != m.F.size() || 
         m.NF.size() != m.F.size()) 
@@ -185,21 +195,22 @@ bool write_wavefront_model(const char* obj_file, const char* mtl_file, ModelData
         return false;
     }
 
-    std::ofstream file(obj_file);
+    // binary opt allows comparison b/w linux and windows builds
+    std::ofstream file(obj_file, std::ios::binary); 
     if (!file)
         return false;
 
-    for (std::size_t i = 0; i < m.V.size(); ++i)
+    for (int i = 0; i < m.V.size(); ++i)
         file << "v " << m.V[i].x() << " " << m.V[i].y() << " " << m.V[i].z() << "\n";
 
-    for (std::size_t i = 0; i < m.UV.size(); ++i)
+    for (int i = 0; i < m.UV.size(); ++i)
         file << "vt " << m.UV[i].u << " " << m.UV[i].v << "\n";
 
-    for (std::size_t i = 0; i < m.NV.size(); ++i)
+    for (int i = 0; i < m.NV.size(); ++i)
         file << "vn " << m.NV[i].x() << " " << m.NV[i].y() << " " << m.NV[i].z() << "\n";
 
     // format: vertex/texture/normal (1-indexed)
-    for (std::size_t irow = 0; irow < m.F.size(); ++irow)
+    for (int irow = 0; irow < m.F.size(); ++irow)
     {
         file << "f";   
         for (int icol = 0; icol < 3; ++icol)
@@ -218,4 +229,46 @@ bool write_wavefront_model(const char* obj_file, const char* mtl_file, ModelData
 
     file.close();
     return true;
+}
+
+uint ModelData::nserial() const
+{
+    return
+        // numV, numF, and NV, F, NF, M, MF offsets
+        4 + 4 + 4 + 4 + 4 + 4 + 4 +
+        nsV() + nsNV() + nsF() + nsNF() + nsM() + nsMF();
+}
+
+void ModelData::serialize(byte buf[]) const
+{
+    uint numV = bswap(uint(V.size()));
+    uint numF = bswap(uint(F.size()));
+    uint NVoff = nsV();
+    uint Foff = NVoff + nsNV();
+    uint NFoff = Foff + nsF();
+    uint Moff = NFoff + nsNF();
+    uint MFoff = Moff + nsM();
+
+    NVoff = bswap(NVoff);
+    Foff =  bswap(Foff);
+    NFoff = bswap(NFoff);
+    Moff =  bswap(Moff);
+    MFoff = bswap(MFoff);
+
+    auto* p = buf;
+
+    std::memcpy(p, &numV, 4); p += 4;
+    std::memcpy(p, &numF, 4); p += 4;
+    std::memcpy(p, &NVoff, 4); p += 4;
+    std::memcpy(p, &Foff, 4); p += 4;
+    std::memcpy(p, &NFoff, 4); p += 4;
+    std::memcpy(p, &Moff, 4); p += 4;
+    std::memcpy(p, &MFoff, 4); p += 4;
+
+    p = vserialize(V, p);
+    p = vserialize(NV, p);
+    p = vserialize(F, p);
+    p = vserialize(NF, p);
+    p = vserialize(M, p);
+    p = vserialize(MF, p);
 }

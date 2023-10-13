@@ -1,4 +1,5 @@
 .vs/
 out/
+build/
 # no eigen for now
 eigen-3.4.0

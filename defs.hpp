@@ -2,12 +2,17 @@
 #ifndef HOST_DEFS_HPP
 #define HOST_DEFS_HPP
 
+#include <cstring>
+#include <cassert>
 #include <cmath>
 #include <vector>
 #include <array>
 #include <limits>
 #include <ranges>
 #include <algorithm>
+#ifdef _MSC_VER
+#include <bit>
+#endif
 
 // assumptions for serialization
 static_assert(std::numeric_limits<unsigned char>::digits == 8, "");
@@ -20,8 +25,21 @@ namespace ranges = std::ranges;
 
 inline uint32_t to_fixedpt(float val)
 {
-    static_assert(sizeof(long) == sizeof(uint32_t), "");
-    return std::lround(double(val) * (1 << 16));
+    double v = double(val) * (1 << 16);
+    
+    if constexpr (sizeof(long) == sizeof(uint32_t))
+        return std::lround(v);
+    else if constexpr (sizeof(long) == sizeof(uint64_t))
+        return std::llround(v);
+}
+
+inline uint32_t bswap(uint32_t v)
+{
+#ifdef _MSC_VER
+    return std::byteswap(v);
+#else
+    return __builtin_bswap32(v);
+#endif
 }
 
 // 3d vector
@@ -29,14 +47,14 @@ struct vec3
 {
     vec3() = default;
 
-    vec3(float x, float y, float z)
+    constexpr vec3(float x, float y, float z)
     {
         v[0] = x;
         v[1] = y;
         v[2] = z;
     }
 
-    vec3(float val) : 
+    constexpr vec3(float val) : 
         vec3(val, val, val) 
     {}
 
@@ -66,19 +84,19 @@ struct vec3
 
     void normalize()
     {
-        float norm = std::sqrtf(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
+        float norm = std::sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
         v[0] /= norm; v[1] /= norm; v[2] /= norm;
     }
 
-    static constexpr uint nsbytes = 12; // num serialized bytes
+    static constexpr uint nserial = 12; // num serialized bytes
 
-    void serialize(byte buf[nsbytes]) const
+    void serialize(byte buf[nserial]) const
     {
-        uint32_t fixed[3];
-        fixed[0] = to_fixedpt(v[0]);
-        fixed[1] = to_fixedpt(v[1]);
-        fixed[2] = to_fixedpt(v[2]);
-        std::memcpy(buf, fixed, nsbytes);
+        uint32_t d[3];
+        d[0] = bswap(to_fixedpt(v[0]));
+        d[1] = bswap(to_fixedpt(v[1]));
+        d[2] = bswap(to_fixedpt(v[2]));
+        std::memcpy(buf, d, nserial);
     }
 
 private:
@@ -104,23 +122,37 @@ inline vec3 operator*(const vec3& rhs, float sc) noexcept { return operator*(sc,
 struct mat
 {
     // ambient, diffuse, specular, mirror coefficients (rgb)
-    // determine km from ns using 1000-2000x+1000x^{2}
     vec3 ka, kd, ks, km;
     // specular (phong) exponent
+    // determine roughness from ns using 1000-2000x+1000x^{2}
     float ns;
 
-    static constexpr uint nsbytes = 4 * vec3::nsbytes + 4;
+    // Default for faces without material.
+    static constexpr mat default_mat()
+    {
+        // these numbers from Blender.
+        // (gray plastic)
+        mat m;
+        m.ka = { 1.f, 1.f, 1.f };
+        m.kd = { 0.8f, 0.8f, 0.8f };
+        m.ks = { 0.5f, 0.5f, 0.5f };
+        m.km = { 0.05f, 0.05f, 0.05f };
+        m.ns = 250.f;
+        return m;
+    }
 
-    void serialize(byte buf[nsbytes]) const
+    static constexpr uint nserial = 4 * vec3::nserial + 4;
+
+    void serialize(byte buf[nserial]) const
     {
         auto* p = buf;
-        ka.serialize(p); p += vec3::nsbytes;
-        kd.serialize(p); p += vec3::nsbytes;
-        ks.serialize(p); p += vec3::nsbytes;
-        km.serialize(p); p += vec3::nsbytes;
+        ka.serialize(p); p += vec3::nserial;
+        kd.serialize(p); p += vec3::nserial;
+        ks.serialize(p); p += vec3::nserial;
+        km.serialize(p); p += vec3::nserial;
 
-        uint32_t ns_fixed = to_fixedpt(ns);
-        std::memcpy(p, &ns_fixed, 4);
+        uint32_t d = bswap(to_fixedpt(ns));
+        std::memcpy(p, &d, 4);
     }
 };
 
@@ -133,7 +165,7 @@ inline byte* vserialize(const std::vector<T>& v, byte* p)
     for (int i = 0; i < int(v.size()); ++i)
     {
         v[i].serialize(p);
-        p += T::nsbytes;
+        p += T::nserial;
     }
     return p;
 }
@@ -141,19 +173,21 @@ inline byte* vserialize(const std::vector<int>& v, byte* p)
 {
     for (int i = 0; i < int(v.size()); ++i)
     {
-        std::memcpy(p, &v[i], 4);
+        uint d = bswap(uint(v[i]));
+        std::memcpy(p, &d, 4);
         p += 4;
     }
     return p;
 }
 
-template <int N>
-inline byte* vserialize(const std::vector<std::array<int, N>>& v, byte* p)
+inline byte* vserialize(const std::vector<std::array<int, 3>>& v, byte* p)
 {
     for (int i = 0; i < int(v.size()); ++i) 
     {
-        for (int j = 0; j < N; ++j) {
-            std::memcpy(p, &v[i][j], 4);
+        for (int j = 0; j < 3; ++j) 
+        {
+            uint d = bswap(uint(v[i][j]));
+            std::memcpy(p, &d, 4);
             p += 4;
         }
     }
@@ -177,49 +211,25 @@ struct ModelData
     std::vector<std::array<int, 3>> UF; // Face texture coord indices
 
 
+    uint nserial() const;
+    void serialize(byte buf[]) const; // model.cpp
+
+private:
     // serial sizes
-    uint nsV() { return uint(V.size()) * vec3::nsbytes; }
-    uint nsNV() { return uint(NV.size()) * vec3::nsbytes; }
-    uint nsF() { return uint(F.size()) * sizeof(F[0]); }
-    uint nsNF() { return uint(NF.size()) * sizeof(NF[0]); }
-    uint nsM() { return uint(M.size()) * mat::nsbytes; }
-    uint nsMF() { return uint(MF.size()) * sizeof(MF[0]); }
-
-    uint nsbytes()
-    {
-        return
-            // numV, numF, and NV, F, NF, M, MF offsets
-            uint(4 + 4 + 4 + 4 + 4 + 4 + 4) +          
-            nsV() + nsNV() + nsF() + nsNF() + nsM() + nsMF();
-    }
-
-    void serialize(byte buf[])
-    {
-        uint numV = uint(V.size());
-        uint numF = uint(F.size());
-        uint NVoff = nsV();
-        uint Foff = NVoff + nsNV();
-        uint NFoff = Foff + nsF();
-        uint Moff = NFoff + nsNF();
-        uint MFoff = Moff + nsM();
-
-        auto* p = buf;
-        std::memcpy(p, &numV, 4); p += 4;
-        std::memcpy(p, &numF, 4); p += 4;
-        std::memcpy(p, &NVoff, 4); p += 4;
-        std::memcpy(p, &Foff, 4); p += 4;
-        std::memcpy(p, &NFoff, 4); p += 4;
-        std::memcpy(p, &Moff, 4); p += 4;
-        std::memcpy(p, &MFoff, 4); p += 4;
-        
-        p = vserialize(V, p);
-        p = vserialize(NV, p);
-        p = vserialize(F, p);
-        p = vserialize(NF, p);
-        p = vserialize(M, p);
-        p = vserialize(MF, p);
-    }
+    uint nsV()  const { return uint(V.size() * vec3::nserial); }
+    uint nsNV() const { return uint(NV.size() * vec3::nserial); }
+    uint nsF()  const { return uint(F.size() * sizeof(F[0])); }
+    uint nsNF() const { return uint(NF.size() * sizeof(NF[0])); }
+    uint nsM()  const { return uint(M.size() * mat::nserial); }
+    uint nsMF() const { return uint(MF.size() * sizeof(MF[0])); }
 };
+
+// Read .obj + .mtl files.
+bool read_model(const char* obj_file, ModelData& model);
+
+// Write .obj + .mtl files.
+bool write_model(const char* obj_file, const char* mtl_file, ModelData& model);
+
 
 struct BBox
 {
@@ -233,23 +243,25 @@ struct BBox
 
     vec3 center() { return 0.5 * (cmin + cmax); }
 
-    static constexpr std::size_t nsbytes = 2 * vec3::nsbytes;
+    static constexpr uint nserial = 2 * vec3::nserial;
 
-    void serialize(byte buf[nsbytes])
+    void serialize(byte buf[nserial]) const
     {
         cmin.serialize(buf);
-        cmax.serialize(buf + vec3::nsbytes);
+        cmax.serialize(buf + vec3::nserial);
     }
 };
 
 struct BVNode
 {
-    BBox bbox;
-    BVNode* left;
-    BVNode* right;
     // if tri==-1 this node is a bbox, else it
     // is a triangle node with face index 'tri'
     int tri;
+    int ndesc; // num descendants (leaves + tree nodes)
+    int nleaves; // num leaves
+    BBox bbox;
+    BVNode* left;
+    BVNode* right;
 };
 
 // Bounding-volume tree (axis-aligned)
@@ -257,20 +269,14 @@ struct BVTree
 {
     BVTree(const ModelData& model);
     ~BVTree();
-
+    
     BVNode* root() { return m_root; }
+
+    uint nserial() const;
+    void serialize(byte buf[]) const; // bvtee.cpp
 
 private:
     BVNode* m_root;
 };
-
-
-// Read .obj + .mtl files.
-bool read_wavefront_model(const char* obj_file, const char* mtl_file, ModelData& model);
-
-// Write .obj + .mtl files.
-bool write_wavefront_model(const char* obj_file, const char* mtl_file, ModelData& model);
-
-
 
 #endif
