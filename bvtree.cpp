@@ -1,7 +1,6 @@
 
 #include <iterator>
 #include <ranges>
-#include <unordered_map>
 #include "defs.hpp"
 
 using BVNodesConstItr = std::vector<BVNode*>::const_iterator;
@@ -77,16 +76,16 @@ static void tree_delete(BVNode* root)
     delete root;
 }
 
-static constexpr uint nserial_tri = BBox::nserial + 4;
+static constexpr uint nserial_leaf = BBox::nserial + 4;
 static constexpr uint nserial_bbox = BBox::nserial + 12;
 
 static uint tree_nserial(BVNode* root)
 {
     if (!root) return 0;
     return
-        root->nleaves * nserial_tri + // tri descendants
-        (root->ndesc - root->nleaves) * nserial_bbox + // bbox descendants
-        (root->tri == -1 ? nserial_bbox : nserial_tri); // this node
+        root->nleaves * nserial_leaf +
+        (root->ndesc - root->nleaves) * nserial_bbox +
+        (root->tri == -1 ? nserial_bbox : nserial_leaf);
 }
 
 static byte* tree_serialize(BVNode* root, byte* const buf, byte* p)
@@ -123,13 +122,14 @@ static byte* tree_serialize(BVNode* root, byte* const buf, byte* p)
     return p;
 }
 
-BVTree::BVTree(const ModelData& m)
+BVTree::BVTree(const SceneData& m)
 {
     // triangle nodes.
     // these are the leaves
     std::vector<BVNode*> tris;
+    tris.resize(m.F.size());
 
-    for (int i = 0; i < m.F.size(); ++i)
+    for (int i = 0; i < int(m.F.size()); ++i)
     {
         auto* n = new BVNode();
         n->bbox = get_tri_bbox(m.V, m.F[i]);
@@ -138,7 +138,7 @@ BVTree::BVTree(const ModelData& m)
         n->tri = i;
         n->ndesc = 0;
         n->nleaves = 0;
-        tris.push_back(n);
+        tris[i] = n;
     }
 
     m_root = tree_create(tris.begin(), tris.end());
@@ -151,7 +151,7 @@ uint BVTree::nserial() const { return tree_nserial(m_root); }
 void BVTree::serialize(byte buf[]) const
 {
     auto* res = tree_serialize(m_root, buf, buf);
-    // check if serialization actually worked
+    // sanity check
     assert(uint(res - buf) == tree_nserial(m_root)); 
     (void)res;
 }

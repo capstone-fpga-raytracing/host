@@ -10,7 +10,7 @@
 
 
 // does not check file for errors!
-bool read_model(const char* obj_file, ModelData& m)
+bool read_model(const char* obj_file, SceneData& m)
 {
     std::ifstream file(obj_file);
     if (!file)
@@ -164,7 +164,7 @@ bool read_model(const char* obj_file, ModelData& m)
     // make faces 0-indexed, 
     // wrap around negative indices, 
     // set invalid indices (0) to -1
-    for (int i = 0; i < m.F.size(); ++i)
+    for (int i = 0; i < int(m.F.size()); ++i)
     {
         for (int j = 0; j < 3; ++j)
         {
@@ -186,7 +186,7 @@ bool read_model(const char* obj_file, ModelData& m)
     return true;
 }
 
-bool write_model(const char* obj_file, const char* mtl_file, ModelData& m)
+bool write_model(const char* obj_file, const char* mtl_file, SceneData& m)
 {
     if (m.UF.size() != m.F.size() || 
         m.NF.size() != m.F.size()) 
@@ -200,17 +200,17 @@ bool write_model(const char* obj_file, const char* mtl_file, ModelData& m)
     if (!file)
         return false;
 
-    for (int i = 0; i < m.V.size(); ++i)
+    for (int i = 0; i < int(m.V.size()); ++i)
         file << "v " << m.V[i].x() << " " << m.V[i].y() << " " << m.V[i].z() << "\n";
 
-    for (int i = 0; i < m.UV.size(); ++i)
+    for (int i = 0; i < int(m.UV.size()); ++i)
         file << "vt " << m.UV[i].u << " " << m.UV[i].v << "\n";
 
-    for (int i = 0; i < m.NV.size(); ++i)
+    for (int i = 0; i < int(m.NV.size()); ++i)
         file << "vn " << m.NV[i].x() << " " << m.NV[i].y() << " " << m.NV[i].z() << "\n";
 
     // format: vertex/texture/normal (1-indexed)
-    for (int irow = 0; irow < m.F.size(); ++irow)
+    for (int irow = 0; irow < int(m.F.size()); ++irow)
     {
         file << "f";   
         for (int icol = 0; icol < 3; ++icol)
@@ -231,40 +231,38 @@ bool write_model(const char* obj_file, const char* mtl_file, ModelData& m)
     return true;
 }
 
-uint ModelData::nserial() const
+uint SceneData::nserial() const
 {
-    return
-        // numV, numF, and NV, F, NF, M, MF offsets
-        4 + 4 + 4 + 4 + 4 + 4 + 4 +
-        nsV() + nsNV() + nsF() + nsNF() + nsM() + nsMF();
+    return nserialhdr + camera::nserial +
+        nsL() + nsV() + nsNV() + nsF() + nsNF() + nsM() + nsMF();
 }
 
-void ModelData::serialize(byte buf[]) const
-{
-    uint numV = bswap(uint(V.size()));
-    uint numF = bswap(uint(F.size()));
-    uint NVoff = nsV();
-    uint Foff = NVoff + nsNV();
-    uint NFoff = Foff + nsF();
-    uint Moff = NFoff + nsNF();
-    uint MFoff = Moff + nsM();
+void SceneData::serialize(byte buf[]) const
+{ 
+    uint h[nwordshdr];
+    /* size  */ h[0] = nserial();
+    /* numV  */ h[1] = uint(V.size());
+    /* numF  */ h[2] = uint(F.size());
+    /* numL  */ h[3] = uint(L.size());
+    /* Loff  */ h[4] = nserialhdr + camera::nserial;
+    /* Voff  */ h[5] = h[4] + nsL();
+    /* NVoff */ h[6] = h[5] + nsV();
+    /* Foff  */ h[7] = h[6] + nsNV();
+    /* NFoff */ h[8] = h[7] + nsF();
+    /* Moff  */ h[9] = h[8] + nsNF();
+    /* MFoff */ h[10] = h[9] + nsM();
+    
+    assert(h[10] + nsMF() == nserial());
 
-    NVoff = bswap(NVoff);
-    Foff =  bswap(Foff);
-    NFoff = bswap(NFoff);
-    Moff =  bswap(Moff);
-    MFoff = bswap(MFoff);
-
+    for (int i = 0; i < nwordshdr; ++i)
+        h[i] = bswap(h[i]);
+    
     auto* p = buf;
+    std::memcpy(p, h, nserialhdr);
+    C.serialize(p); 
+    p += camera::nserial;
 
-    std::memcpy(p, &numV, 4); p += 4;
-    std::memcpy(p, &numF, 4); p += 4;
-    std::memcpy(p, &NVoff, 4); p += 4;
-    std::memcpy(p, &Foff, 4); p += 4;
-    std::memcpy(p, &NFoff, 4); p += 4;
-    std::memcpy(p, &Moff, 4); p += 4;
-    std::memcpy(p, &MFoff, 4); p += 4;
-
+    p = vserialize(L, p);
     p = vserialize(V, p);
     p = vserialize(NV, p);
     p = vserialize(F, p);

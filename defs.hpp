@@ -14,9 +14,13 @@
 #include <bit>
 #endif
 
-// assumptions for serialization
-static_assert(std::numeric_limits<unsigned char>::digits == 8, "");
-static_assert(sizeof(int) == sizeof(int32_t), "");
+#define TEST_MODELIO 0
+#define ENABLE_BSWAP 1
+
+
+static_assert(std::numeric_limits<unsigned char>::digits == 8);
+static_assert(sizeof(long) == sizeof(uint32_t) || sizeof(long) == sizeof(uint64_t));
+static_assert(sizeof(int) == sizeof(int32_t));
 
 using byte = unsigned char;
 using uint = unsigned int;
@@ -35,10 +39,14 @@ inline uint32_t to_fixedpt(float val)
 
 inline uint32_t bswap(uint32_t v)
 {
+#if ENABLE_BSWAP
 #ifdef _MSC_VER
     return std::byteswap(v);
 #else
     return __builtin_bswap32(v);
+#endif
+#else
+    return v;
 #endif
 }
 
@@ -88,15 +96,15 @@ struct vec3
         v[0] /= norm; v[1] /= norm; v[2] /= norm;
     }
 
-    static constexpr uint nserial = 12; // num serialized bytes
+    static constexpr uint nserial = 12;
 
     void serialize(byte buf[nserial]) const
     {
-        uint32_t d[3];
+        uint d[3];
         d[0] = bswap(to_fixedpt(v[0]));
         d[1] = bswap(to_fixedpt(v[1]));
         d[2] = bswap(to_fixedpt(v[2]));
-        std::memcpy(buf, d, nserial);
+        std::memcpy(buf, d, 12);
     }
 
 private:
@@ -151,13 +159,52 @@ struct mat
         ks.serialize(p); p += vec3::nserial;
         km.serialize(p); p += vec3::nserial;
 
-        uint32_t d = bswap(to_fixedpt(ns));
+        uint d = bswap(to_fixedpt(ns));
         std::memcpy(p, &d, 4);
     }
 };
 
 // Texture coordinate
 struct uv { float u, v; };
+
+struct light
+{
+    vec3 pos; // position
+    vec3 rgb; // color
+
+    static constexpr uint nserial = 2 * vec3::nserial;
+
+    void serialize(byte buf[nserial]) const
+    {
+        pos.serialize(buf);
+        rgb.serialize(buf + vec3::nserial);
+    }
+};
+
+struct camera
+{
+    vec3 eye; // position
+    vec3 u, v, w; // axes (-w is viewing direction)
+    float img_dist; // distance to img plane
+    float img_width, img_height;
+
+    static constexpr uint nserial = 4 * vec3::nserial + 12;
+
+    void serialize(byte buf[nserial]) const
+    {
+        auto* p = buf;
+        eye.serialize(p); p += vec3::nserial;
+        u.serialize(p); p += vec3::nserial;
+        v.serialize(p); p += vec3::nserial;
+        w.serialize(p); p += vec3::nserial;
+
+        uint d[3];
+        d[0] = bswap(to_fixedpt(img_dist));
+        d[1] = bswap(to_fixedpt(img_width));
+        d[2] = bswap(to_fixedpt(img_height));
+        std::memcpy(p, d, 12);
+    }
+};
 
 template <class T>
 inline byte* vserialize(const std::vector<T>& v, byte* p)
@@ -194,8 +241,12 @@ inline byte* vserialize(const std::vector<std::array<int, 3>>& v, byte* p)
     return p;
 }
 
-struct ModelData
+struct SceneData
 {
+    // scene
+    camera C;
+    std::vector<light> L; // lights
+    
     // geometry
     std::vector<vec3> V; // Vertices 
     std::vector<vec3> NV; // Normals
@@ -206,16 +257,20 @@ struct ModelData
     std::vector<mat> M; // Materials
     std::vector<int> MF; // Face material indices
 
-    // texture data (if we have time)
+    // textures (not serialized for now)
     std::vector<uv> UV;// Texture coords
     std::vector<std::array<int, 3>> UF; // Face texture coord indices
 
-
     uint nserial() const;
-    void serialize(byte buf[]) const; // model.cpp
+    void serialize(byte buf[]) const;
+
 
 private:
-    // serial sizes
+    static constexpr int nwordshdr = 11; // # words in header
+    static constexpr uint nserialhdr = 4 * nwordshdr; // serial size of header
+
+    // sizes of each member when serialized
+    uint nsL()  const { return uint(L.size() * light::nserial); }
     uint nsV()  const { return uint(V.size() * vec3::nserial); }
     uint nsNV() const { return uint(NV.size() * vec3::nserial); }
     uint nsF()  const { return uint(F.size() * sizeof(F[0])); }
@@ -225,10 +280,10 @@ private:
 };
 
 // Read .obj + .mtl files.
-bool read_model(const char* obj_file, ModelData& model);
+bool read_model(const char* obj_file, SceneData& model);
 
 // Write .obj + .mtl files.
-bool write_model(const char* obj_file, const char* mtl_file, ModelData& model);
+bool write_model(const char* obj_file, const char* mtl_file, SceneData& model);
 
 
 struct BBox
@@ -237,8 +292,8 @@ struct BBox
     vec3 cmax; // Max corner
 
     BBox() :
-        cmin({ std::numeric_limits<float>::infinity() }),
-        cmax({ -std::numeric_limits<float>::infinity() })
+        cmin(std::numeric_limits<float>::infinity()),
+        cmax(-std::numeric_limits<float>::infinity())
     {}
 
     vec3 center() { return 0.5 * (cmin + cmax); }
@@ -267,13 +322,13 @@ struct BVNode
 // Bounding-volume tree (axis-aligned)
 struct BVTree
 {
-    BVTree(const ModelData& model);
+    BVTree(const SceneData& model);
     ~BVTree();
     
     BVNode* root() { return m_root; }
 
     uint nserial() const;
-    void serialize(byte buf[]) const; // bvtee.cpp
+    void serialize(byte buf[]) const;
 
 private:
     BVNode* m_root;

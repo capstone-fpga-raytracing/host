@@ -1,6 +1,6 @@
-#define DO_TEST 0
 
 #include "defs.hpp"
+#include <cstdlib>
 #include <iostream>
 #include <fstream>
 #include <sstream>
@@ -8,73 +8,64 @@
 
 #include "cxxopts/cxxopts.hpp"
 
+
+[[noreturn]] void bail(const char* msg)
+{
+    std::cerr << msg;
+    std::exit(EXIT_FAILURE);
+}
+
 int main(int argc, char** argv)
 {
     cxxopts::Options opts("host", "Host-side of FPGA raytracer.");
     opts.add_options()
         ("h,help", "Show usage.")
-        ("f,file", "Input model file (.obj).", cxxopts::value<std::string>(), "<file>");
+        ("i,infile", "Input model file (.obj).", cxxopts::value<std::string>(), "<infile>")
+        ("o,outfile", "Output serialized model (.bin).", cxxopts::value<std::string>(), "<outfile>");
 
     auto res = opts.parse(argc, argv);
     if (res["help"].as<bool>())
     {
-        std::cout << opts.help() << std::endl;
+        std::cout << opts.help();
         return EXIT_SUCCESS;
     }
-    if (res["file"].count() == 0)
-    {
-        std::cerr << "error: no input file.\n";
-        return EXIT_FAILURE;
-    }
 
-    auto model_path = res["file"].as<std::string>();
+    if (res["infile"].count() == 0)
+        bail("error: no input file.\n");
 
-    ModelData model;
-    if (!read_model(model_path.c_str(), model))
-    {
-        std::cerr << "error: failed to read model file\n";
-        return EXIT_FAILURE;
-    }
-#if DO_TEST
+    if (res["outfile"].count() == 0)
+        bail("error: no output file.\n");
+
+
+    auto& infile = res["infile"].as<std::string>();
+    auto& outfile = res["outfile"].as<std::string>();
+
+    SceneData model;
+    if (!read_model(infile.c_str(), model))
+        bail("error: failed to read model file.\n");
+
+#if TEST_MODELIO
     if (!write_model("testobj.obj", nullptr, model))
-    {
-        std::cerr << "error: failed to test write model file\n";
-        return EXIT_FAILURE;
-    }
+        bail("error: failed to test write model file.\n");
 #endif
 
-    auto nserial = model.nserial();
-    byte* serbuf = new byte[nserial];
-    model.serialize(serbuf);
+    BVTree bvh(model);
 
-    std::ofstream outf("serfile.bin", std::ios::binary);
+    std::ofstream outf(outfile, std::ios::binary);
     if (!outf)
-    {
-        std::cerr << "error: could not open output serfile";
-        return EXIT_FAILURE;
-    }
+        bail("error: could not open output file.\n");
 
-    outf.write((const char *)serbuf, nserial);
+    auto nsmodel = model.nserial();
+    auto nserial = nsmodel + bvh.nserial();
+
+    byte* outbuf = new byte[nserial];
+    model.serialize(outbuf);
+    bvh.serialize(outbuf + nsmodel);
+
+    outf.write((const char *)outbuf, nserial);
     outf.close();
 
-    delete[] serbuf;
-
-    BVTree tree(model);
-    nserial = tree.nserial();
-    byte* bvserbuf = new byte[nserial];
-    tree.serialize(bvserbuf);
-    
-    std::ofstream outbf("bvserfile.bin", std::ios::binary);
-    if (!outf)
-    {
-        std::cerr << "error: could not open output bvserfile";
-        return EXIT_FAILURE;
-    }
-
-    outbf.write((const char*)bvserbuf, nserial);
-    outbf.close();
-
-    delete[] bvserbuf;
+    delete[] outbuf;
 
     return 0;
 }
