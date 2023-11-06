@@ -122,7 +122,7 @@ bool read_model(const char* obj_file, SceneData& m)
                 extract_face_vert(is, f3, uf3, nf3);
             }
 
-            if (nf[0] == 0 || nf[1] == 0 || nf[2] == 0 || nf3 == 0)
+            if (nf[0] == 0 || nf[1] == 0 || nf[2] == 0 || (f3 != 0 && nf3 == 0))
             {
                 std::cerr << "line " << line_num;
                 std::cerr << ": face has missing normal\n";
@@ -149,11 +149,11 @@ bool read_model(const char* obj_file, SceneData& m)
                 m.NF.push_back({ nf[0], nf[2], nf3 });
             }
         }
-        else {
-            std::cerr << "line " << line_num;
-            std::cerr << ": unrecognized syntax\n";
-            return false;
-        }
+        //else {
+        //    std::cerr << "line " << line_num;
+        //    std::cerr << ": unrecognized syntax\n";
+        //    return false;
+        //}
 
         is.clear(); // clear eof
         line_num++;
@@ -258,7 +258,8 @@ void SceneData::serialize(byte buf[]) const
         h[i] = bswap(h[i]);
     
     auto* p = buf;
-    std::memcpy(p, h, nserialhdr);
+    std::memcpy(p, h, nserialhdr); 
+    p += nserialhdr;
     C.serialize(p); 
     p += camera::nserial;
 

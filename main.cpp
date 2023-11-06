@@ -49,6 +49,26 @@ int main(int argc, char** argv)
         bail("error: failed to test write model file.\n");
 #endif
 
+#if TEST_SCENE
+    // These numbers mostly from blender
+    model.C.eye = { 8.4585f, -2.5662f, 10.108f };
+    model.C.focal_len = 5;
+    model.C.width = 3.6;
+    model.C.height = model.C.width * (600. / 800.); // 800x600 render
+    model.C.u = { 1, 1, 0 };
+    model.C.v = { -1, 1, 1 };
+    model.C.w = { -1, 1, -1 };
+
+    light l1, l2;
+    l1.pos = { 3.6746, 2.0055, 3.1325 };
+    l1.rgb = { 0, 0, 1 }; // blue
+    l2.pos = { 1.5699, 0.87056, 3.1325 };   
+    l2.rgb = { 1, 1, 0 }; // yellow
+
+    model.L.push_back(l1);
+    model.L.push_back(l2);
+#endif
+
     BVTree bvh(model);
 
     std::ofstream outf(outfile, std::ios::binary);

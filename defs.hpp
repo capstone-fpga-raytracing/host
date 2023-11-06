@@ -14,6 +14,7 @@
 #include <bit>
 #endif
 
+#define TEST_SCENE 1
 #define TEST_MODELIO 0
 #define ENABLE_BSWAP 1
 
@@ -94,6 +95,14 @@ struct vec3
     {
         float norm = std::sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
         v[0] /= norm; v[1] /= norm; v[2] /= norm;
+    }
+
+    vec3 cross(vec3 rhs)
+    {
+        return {
+            y() * rhs.z() - z() * rhs.y(),
+            z() * rhs.x() - x() * rhs.z(),
+            x() * rhs.y() - y() * rhs.x() };
     }
 
     static constexpr uint nserial = 12;
@@ -185,8 +194,8 @@ struct camera
 {
     vec3 eye; // position
     vec3 u, v, w; // axes (-w is viewing direction)
-    float img_dist; // distance to img plane
-    float img_width, img_height;
+    float focal_len; // focal length (distance to img plane)
+    float width, height; // size of projected image (in world space)
 
     static constexpr uint nserial = 4 * vec3::nserial + 12;
 
@@ -199,9 +208,9 @@ struct camera
         w.serialize(p); p += vec3::nserial;
 
         uint d[3];
-        d[0] = bswap(to_fixedpt(img_dist));
-        d[1] = bswap(to_fixedpt(img_width));
-        d[2] = bswap(to_fixedpt(img_height));
+        d[0] = bswap(to_fixedpt(focal_len));
+        d[1] = bswap(to_fixedpt(width));
+        d[2] = bswap(to_fixedpt(height));
         std::memcpy(p, d, 12);
     }
 };
