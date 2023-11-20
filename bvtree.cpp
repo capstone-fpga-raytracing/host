@@ -106,12 +106,12 @@ static byte* tree_serialize(BVNode* root, byte* const buf, byte* p)
         uint lpos = uint(-1), rpos = uint(-1);
         if (root->left)
         {
-            lpos = bswap(uint(p + 8 - buf));
+            lpos = bswap(uint(p + 8 - buf) / 4);
             if (root->right)
-                rpos = bswap(uint(p + 8 + tree_nserial(root->left) - buf));
+                rpos = bswap(uint(p + 8 + tree_nserial(root->left) - buf) / 4);
         }
         else if (root->right)
-            rpos = bswap(uint(p + 8 - buf));
+            rpos = bswap(uint(p + 8 - buf) / 4);
 
         std::memcpy(p, &lpos, 4); p += 4;
         std::memcpy(p, &rpos, 4); p += 4;

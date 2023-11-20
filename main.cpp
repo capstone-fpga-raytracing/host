@@ -36,7 +36,6 @@ int main(int argc, char** argv)
     if (res["outfile"].count() == 0)
         bail("error: no output file.\n");
 
-
     auto& infile = res["infile"].as<std::string>();
     auto& outfile = res["outfile"].as<std::string>();
 
@@ -54,10 +53,10 @@ int main(int argc, char** argv)
     model.C.eye = { 8.4585f, -2.5662f, 10.108f };
     model.C.focal_len = 5;
     model.C.width = 3.6;
-    model.C.height = model.C.width * (600. / 800.); // 800x600 render
+    model.C.height = model.C.width * (240. / 320.); // 800x600 render
     model.C.u = { 1, 1, 0 };
-    model.C.v = { -1, 1, 1 };
-    model.C.w = { -1, 1, -1 };
+    model.C.v = { -1, 1, std::sqrtf(2.f) };
+    model.C.w = { 1, -1, std::sqrtf(2.f) };
 
     light l1, l2;
     l1.pos = { 3.6746, 2.0055, 3.1325 };
