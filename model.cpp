@@ -57,14 +57,14 @@ bool read_model(const char* obj_file, SceneData& m)
                 if (!is.eof())
                 {
                     float w; is >> w;
-                    if (w != 0.0f) {
+                    if (w != 0) {
                         std::cerr << "line " << line_num;
                         std::cerr << ": tex coord is not 2D\n";
                         return false;
                     }
                 }
             }
-            else uv.v = 0.0f;
+            else uv.v = 0;
 
             m.UV.push_back(uv);
         }
@@ -233,36 +233,29 @@ bool write_model(const char* obj_file, const char* mtl_file, SceneData& m)
 
 uint SceneData::nserial() const
 {
-    return nserialhdr + camera::nserial +
+    return nwordshdr + camera::nserial +
         nsL() + nsV() + nsNV() + nsF() + nsNF() + nsM() + nsMF();
 }
 
-void SceneData::serialize(byte buf[]) const
+void SceneData::serialize(uint* p) const
 { 
-    uint h[nwordshdr];
-    /* size  */ h[0] = nserial();
-    /* numV  */ h[1] = uint(V.size());
-    /* numF  */ h[2] = uint(F.size());
-    /* numL  */ h[3] = uint(L.size());
-    /* Loff  */ h[4] = nserialhdr + camera::nserial;
-    /* Voff  */ h[5] = h[4] + nsL();
-    /* NVoff */ h[6] = h[5] + nsV();
-    /* Foff  */ h[7] = h[6] + nsNV();
-    /* NFoff */ h[8] = h[7] + nsF();
-    /* Moff  */ h[9] = h[8] + nsNF();
-    /* MFoff */ h[10] = h[9] + nsM();
+    /* size  */ p[0] = nserial();
+    /* numV  */ p[1] = uint(V.size());
+    /* numF  */ p[2] = uint(F.size());
+    /* numL  */ p[3] = uint(L.size());
+    /* Loff  */ p[4] = nwordshdr + camera::nserial;
+    /* Voff  */ p[5] = p[4] + nsL();
+    /* NVoff */ p[6] = p[5] + nsV();
+    /* Foff  */ p[7] = p[6] + nsNV();
+    /* NFoff */ p[8] = p[7] + nsF();
+    /* Moff  */ p[9] = p[8] + nsNF();
+    /* MFoff */ p[10] = p[9] + nsM();
     
-    assert(h[10] + nsMF() == nserial());
+    assert(p[10] + nsMF() == nserial());
+    p += nwordshdr;
 
-    for (int i = 0; i < nwordshdr; ++i)
-        h[i] = bswap(h[i]);
-    
-    auto* p = buf;
-    std::memcpy(p, h, nserialhdr); 
-    p += nserialhdr;
     C.serialize(p); 
     p += camera::nserial;
-
     p = vserialize(L, p);
     p = vserialize(V, p);
     p = vserialize(NV, p);

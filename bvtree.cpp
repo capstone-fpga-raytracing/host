@@ -21,7 +21,7 @@ static BBox get_nodes_bbox(BVNodesConstItr begin, BVNodesConstItr end)
     BBox bb;
     for (auto it = begin; it != end; ++it)
     {
-        auto& node = *it;
+        const BVNode* node = *it;
         bb.cmin = bb.cmin.cwiseMin(node->bbox.cmin);
         bb.cmax = bb.cmax.cwiseMax(node->bbox.cmax);
     }
@@ -49,14 +49,14 @@ static BVNode* tree_create(BVNodesConstItr tris_beg, BVNodesConstItr tris_end)
     root->nleaves = int(std::distance(tris_beg, tris_end));
     root->ndesc = 0;
     
-    int maxDim = (root->bbox.cmax - root->bbox.cmin).maxDim();
+    const int maxDim = (root->bbox.cmax - root->bbox.cmin).maxDim();
     // sort by longest dimension
     std::vector<BVNode*> sortedtris(tris_beg, tris_end);
     ranges::sort(sortedtris, [=](BVNode* lhs, BVNode* rhs) {
         return lhs->bbox.center()[maxDim] < rhs->bbox.center()[maxDim]; });
 
     // divide equally into 2 subtrees
-    auto lhs_size = sortedtris.size() / 2;
+    size_t lhs_size = sortedtris.size() / 2;
     root->left = get_subtree(sortedtris.begin(), sortedtris.begin() + lhs_size);
     root->right = get_subtree(sortedtris.begin() + lhs_size, sortedtris.end());
 
@@ -76,8 +76,8 @@ static void tree_delete(BVNode* root)
     delete root;
 }
 
-static constexpr uint nserial_leaf = BBox::nserial + 4;
-static constexpr uint nserial_bbox = BBox::nserial + 12;
+static constexpr uint nserial_leaf = BBox::nserial + 1;
+static constexpr uint nserial_bbox = BBox::nserial + 3;
 
 static uint tree_nserial(BVNode* root)
 {
@@ -88,37 +88,36 @@ static uint tree_nserial(BVNode* root)
         (root->tri == -1 ? nserial_bbox : nserial_leaf);
 }
 
-static byte* tree_serialize(BVNode* root, byte* const buf, byte* p)
+static uint* tree_serialize(BVNode* root, uint* const beg, uint* p)
 {
     if (!root) return p;
 
     // bbox, tri
     root->bbox.serialize(p);
     p += BBox::nserial;
-    uint d = bswap(uint(root->tri));
-    std::memcpy(p, &d, 4);
-    p += 4;
+    *p++ = root->tri; 
 
-    // left, right
     if (root->tri == -1)
     {
-        // offsets into buf where left/right nodes are found
+        // offsets where left/right nodes are found
         uint lpos = uint(-1), rpos = uint(-1);
         if (root->left)
         {
-            lpos = bswap(uint(p + 8 - buf) / 4);
-            if (root->right)
-                rpos = bswap(uint(p + 8 + tree_nserial(root->left) - buf) / 4);
+            lpos = uint(p + 2 - beg);
+            if (root->right) {
+                // right subtree comes after all nodes in left subtree
+                rpos = uint(p + 2 + tree_nserial(root->left) - beg);
+            }
         }
-        else if (root->right)
-            rpos = bswap(uint(p + 8 - buf) / 4);
-
-        std::memcpy(p, &lpos, 4); p += 4;
-        std::memcpy(p, &rpos, 4); p += 4;
+        else if (root->right) {
+            rpos = uint(p + 2 - beg);
+        }
+        *p++ = lpos; 
+        *p++ = rpos;
     }
 
-    p = tree_serialize(root->left, buf, p);
-    p = tree_serialize(root->right, buf, p);
+    p = tree_serialize(root->left, beg, p);
+    p = tree_serialize(root->right, beg, p);
     return p;
 }
 
@@ -148,10 +147,10 @@ BVTree::~BVTree() { tree_delete(m_root); }
 
 uint BVTree::nserial() const { return tree_nserial(m_root); }
 
-void BVTree::serialize(byte buf[]) const
+void BVTree::serialize(uint* buf) const
 {
     auto* res = tree_serialize(m_root, buf, buf);
     // sanity check
-    assert(uint(res - buf) == tree_nserial(m_root)); 
+    assert(uint(res - buf) == nserial()); 
     (void)res;
 }

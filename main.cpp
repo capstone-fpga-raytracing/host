@@ -9,6 +9,10 @@
 #include "cxxopts/cxxopts.hpp"
 
 
+#define TEST_SCENE 1
+#define TEST_MODELIO 0
+
+
 [[noreturn]] void bail(const char* msg)
 {
     std::cerr << msg;
@@ -21,70 +25,83 @@ int main(int argc, char** argv)
     opts.add_options()
         ("h,help", "Show usage.")
         ("i,infile", "Input model file (.obj).", cxxopts::value<std::string>(), "<infile>")
-        ("o,outfile", "Output serialized model (.bin).", cxxopts::value<std::string>(), "<outfile>");
+        ("o,outfile", "Output serialized model (.bin).", cxxopts::value<std::string>(), "<outfile>")
+        ("e,eswap", "Swap endianness.");
 
-    auto res = opts.parse(argc, argv);
-    if (res["help"].as<bool>())
+    auto args = opts.parse(argc, argv);
+    if (args["help"].as<bool>())
     {
         std::cout << opts.help();
         return EXIT_SUCCESS;
     }
 
-    if (res["infile"].count() == 0)
+    if (args["infile"].count() == 0)
         bail("error: no input file.\n");
 
-    if (res["outfile"].count() == 0)
+    if (args["outfile"].count() == 0)
         bail("error: no output file.\n");
 
-    auto& infile = res["infile"].as<std::string>();
-    auto& outfile = res["outfile"].as<std::string>();
+    auto& infile = args["infile"].as<std::string>();
+    auto& outfile = args["outfile"].as<std::string>();
 
-    SceneData model;
-    if (!read_model(infile.c_str(), model))
+    SceneData scene;
+    if (!read_model(infile.c_str(), scene))
         bail("error: failed to read model file.\n");
 
 #if TEST_MODELIO
-    if (!write_model("testobj.obj", nullptr, model))
+    if (!write_model("testobj.obj", nullptr, scene))
         bail("error: failed to test write model file.\n");
 #endif
 
 #if TEST_SCENE
     // These numbers mostly from blender
-    model.C.eye = { 8.4585f, -2.5662f, 10.108f };
-    model.C.focal_len = 5;
-    model.C.width = 3.6;
-    model.C.height = model.C.width * (240. / 320.); // 800x600 render
-    model.C.u = { 1, 1, 0 };
-    model.C.v = { -1, 1, std::sqrtf(2.f) };
-    model.C.w = { 1, -1, std::sqrtf(2.f) };
+    //scene.C.eye = { 8.4585f, -2.5662f, 10.108f };
+    scene.C.eye = { 7.0827, -3.4167, 7.4254 };
+    scene.C.focal_len = 5;
+    scene.C.width = 3.6;
+    scene.C.height = scene.C.width * (240. / 320.); // 320x240 render  
+    scene.C.u = { 1, 1, 0 };
+    scene.C.v = { -1, 1, std::sqrt(2) };
+    scene.C.w = { 1, -1, std::sqrt(2) };
 
     light l1, l2;
+    //l1.pos = { 0.9502, 1.953, 4.1162 };
+    //l2.pos = { -2.24469, 1.953, 4.1162 };  
     l1.pos = { 3.6746, 2.0055, 3.1325 };
-    l1.rgb = { 0, 0, 1 }; // blue
     l2.pos = { 1.5699, 0.87056, 3.1325 };   
-    l2.rgb = { 1, 1, 0 }; // yellow
 
-    model.L.push_back(l1);
-    model.L.push_back(l2);
+    //l1.rgb = { 1, 1, 0 }; // yellow
+    //l2.rgb = { 1, 1, 0 }; // yellow
+    l1.rgb = { 1, 1, 1 }; // white
+    l2.rgb = { 1, 1, 1 }; // white
+    
+    scene.L.push_back(l1);
+    scene.L.push_back(l2);
 #endif
 
-    BVTree bvh(model);
+    BVTree bvh(scene);
 
     std::ofstream outf(outfile, std::ios::binary);
     if (!outf)
         bail("error: could not open output file.\n");
 
-    auto nsmodel = model.nserial();
-    auto nserial = nsmodel + bvh.nserial();
+    uint nsmodel = scene.nserial();
+    uint nserial = nsmodel + bvh.nserial();
 
-    byte* outbuf = new byte[nserial];
-    model.serialize(outbuf);
-    bvh.serialize(outbuf + nsmodel);
+    uint* buf = new uint[nserial];
+    scene.serialize(buf);
+    bvh.serialize(buf + nsmodel);
 
-    outf.write((const char *)outbuf, nserial);
+    // swap endianness
+    if (args["eswap"].as<bool>()) {
+        for (uint i = 0; i < nserial; ++i) {
+            buf[i] = bswap(buf[i]);
+        }
+    }
+
+    outf.write((const char *)buf, 4 * nserial);
     outf.close();
 
-    delete[] outbuf;
-
+    delete[] buf;
     return 0;
 }
