@@ -12,11 +12,15 @@
 #include <limits>
 #include <ranges>
 #include <algorithm>
+#include <filesystem>
 #ifdef _MSC_VER
 #include <bit>
 #endif
 
+#define ENABLE_TEXTURES 0
+
 namespace ranges = std::ranges;
+namespace fs = std::filesystem;
 
 using uint = unsigned int;
 using byte = unsigned char;
@@ -56,6 +60,14 @@ struct vec3
         v[2] = z;
     }
 
+    template <typename T>
+    constexpr vec3(std::array<T, 3> a)
+    {
+        v[0] = a[0];
+        v[1] = a[1];
+        v[2] = a[2];
+    }
+
     constexpr vec3(double val) : 
         vec3(val, val, val) 
     {}
@@ -71,7 +83,8 @@ struct vec3
     double& operator[](int pos) { return v[pos]; }
     const double& operator[](int pos) const { return v[pos]; }
 
-    double dot(vec3 rhs) const {
+    double dot(vec3 rhs) const 
+    {
         return x() * rhs.x() + y() * rhs.y() + z() * rhs.z();
     }
 
@@ -83,7 +96,8 @@ struct vec3
             x() * rhs.y() - y() * rhs.x() };
     }
 
-    double norm() const {
+    double norm() const 
+    {
         return std::sqrt(x() * x() + y() * y() + z() * z());
     }
 
@@ -221,6 +235,52 @@ struct camera
     }
 };
 
+using TriIndexVector = std::vector<std::array<int, 3>>;
+
+struct SceneData
+{
+    SceneData(const fs::path& scene_path);
+
+    // scene
+    camera C;
+    std::vector<light> L; // lights
+    
+    // geometry
+    std::vector<vec3> V; // Vertices 
+    std::vector<vec3> NV; // Normals
+    TriIndexVector F; // Face indices
+    TriIndexVector NF; // Face normal indices
+
+    // materials
+    std::vector<mat> M; // Materials
+    std::vector<int> MF; // Face material indices
+
+    // textures (not serialized for now)
+    std::vector<uv> UV;// Texture coords
+    TriIndexVector UF; // Face texture coord indices
+
+
+    bool ok() const { return m_ok; }
+    operator bool() const { return ok(); }
+
+    uint nserial() const;
+    void serialize(uint* buf) const;
+
+private:
+    static constexpr int nwordshdr = 11; // # words in header
+
+    // sizes of each member when serialized
+    uint nsL()  const { return uint(L.size() * light::nserial); }
+    uint nsV()  const { return uint(V.size() * vec3::nserial); }
+    uint nsNV() const { return uint(NV.size() * vec3::nserial); }
+    uint nsF()  const { return uint(F.size() * F[0].size()); }
+    uint nsNF() const { return uint(NF.size() * NF[0].size()); }
+    uint nsM()  const { return uint(M.size() * mat::nserial); }
+    uint nsMF() const { return uint(MF.size()); }
+
+    bool m_ok;
+};
+
 template <class T>
 inline uint* vserialize(const std::vector<T>& v, uint* p)
 {
@@ -238,59 +298,15 @@ inline uint* vserialize(const std::vector<int>& v, uint* p)
     return p + v.size();
 }
 
-inline uint* vserialize(const std::vector<std::array<int, 3>>& v, uint* p)
+inline uint* vserialize(const TriIndexVector& v, uint* p)
 {
-    for (size_t i = 0; i < v.size(); ++i) 
+    for (size_t i = 0; i < v.size(); ++i)
     {
         std::copy(v[i].begin(), v[i].end(), p);
         p += 3;
     }
     return p;
 }
-
-struct SceneData
-{
-    // scene
-    camera C;
-    std::vector<light> L; // lights
-    
-    // geometry
-    std::vector<vec3> V; // Vertices 
-    std::vector<vec3> NV; // Normals
-    std::vector<std::array<int, 3>> F; // Face indices
-    std::vector<std::array<int, 3>> NF; // Face normal indices
-
-    // materials
-    std::vector<mat> M; // Materials
-    std::vector<int> MF; // Face material indices
-
-    // textures (not serialized for now)
-    std::vector<uv> UV;// Texture coords
-    std::vector<std::array<int, 3>> UF; // Face texture coord indices
-
-    uint nserial() const;
-    void serialize(uint* buf) const;
-
-
-private:
-    static constexpr int nwordshdr = 11; // # words in header
-
-    // sizes of each member when serialized
-    uint nsL()  const { return uint(L.size() * light::nserial); }
-    uint nsV()  const { return uint(V.size() * vec3::nserial); }
-    uint nsNV() const { return uint(NV.size() * vec3::nserial); }
-    uint nsF()  const { return uint(F.size() * F[0].size()); }
-    uint nsNF() const { return uint(NF.size() * NF[0].size()); }
-    uint nsM()  const { return uint(M.size() * mat::nserial); }
-    uint nsMF() const { return uint(MF.size()); }
-};
-
-// Read .obj + .mtl files.
-bool read_model(const char* obj_file, SceneData& model);
-
-// Write .obj + .mtl files.
-bool write_model(const char* obj_file, const char* mtl_file, SceneData& model);
-
 
 struct BBox
 {

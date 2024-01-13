@@ -5,7 +5,7 @@
 
 using BVNodesConstItr = std::vector<BVNode*>::const_iterator;
 
-static BBox get_tri_bbox(const std::vector<vec3>& V, const std::array<int, 3>& tri)
+static inline BBox get_tri_bbox(const std::vector<vec3>& V, const std::array<int, 3>& tri)
 {
     BBox bb;
     for (int i = 0; i < 3; ++i)
@@ -16,7 +16,7 @@ static BBox get_tri_bbox(const std::vector<vec3>& V, const std::array<int, 3>& t
     return bb;
 }
 
-static BBox get_nodes_bbox(BVNodesConstItr begin, BVNodesConstItr end)
+static inline BBox get_nodes_bbox(BVNodesConstItr begin, BVNodesConstItr end)
 {
     BBox bb;
     for (auto it = begin; it != end; ++it)

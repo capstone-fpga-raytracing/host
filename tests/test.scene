@@ -1,0 +1,16 @@
+obj
+test.obj
+
+camera
+eye 7.0827 -3.4167 7.4254
+uvw 1 1 0 -1 1 1.41421356 1 -1 1.41421356
+focal_len 5
+proj_size 2.7 3.6
+
+light // yellow
+pos 3.6746 2.0055 3.1325
+rgb 1 1 0
+
+light // red
+pos 1.5699 0.87056 3.1325
+rgb 1 0 0
