@@ -133,7 +133,7 @@ SceneData::SceneData(const fs::path& scpath) : m_ok(false)
     scfile.close();
 
     // Parse obj + mtl files
-    int default_mat_idx = -1;
+    std::vector<int> missing_matFids;
     for (size_t iobj = 0; iobj < objpaths.size(); ++iobj)
     {
         auto& objpath = objpaths[iobj];
@@ -227,15 +227,23 @@ SceneData::SceneData(const fs::path& scpath) : m_ok(false)
 
             for (size_t i = 0; i < matids.size(); ++i)
             {
-                if (matids[i] < 0) {
-                    if (default_mat_idx == -1) {
-                        M.push_back(mat::default_mat());
-                        default_mat_idx = int(M.size() - 1);
-                    }
-                    MF.push_back(default_mat_idx);
+                if (matids[i] < 0) [[unlikely]] {                  
+                    MF.push_back(-1);
+                    missing_matFids.push_back(int(MF.size() - 1));
                 }
                 else { MF.push_back(baseMidx + matids[i]); }
             }
+        }
+    }
+
+    // assign default to faces with no material
+    if (missing_matFids.size() != 0) 
+    {
+        M.push_back(mat::default_mat());
+        int default_matid = int(M.size() - 1);
+
+        for (size_t i = 0; i < missing_matFids.size(); ++i) {
+            MF[missing_matFids[i]] = default_matid;
         }
     }
 
