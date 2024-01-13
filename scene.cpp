@@ -175,8 +175,13 @@ SceneData::SceneData(const fs::path& scpath) : m_ok(false)
             m.kd = mobj.diffuse;
             m.ks = mobj.specular;
             m.ns = mobj.shininess;
-            // dumb approximation
-            double refl = 1.0 - mobj.roughness;
+
+            // approximate roughness from phong exponent by solving
+            // 1000-2000x+1000x^{2} = ns, then refl=1-roughness (stupid but should work).
+            // this is the what blender appears to use
+            assert(m.ns >= 0);
+            double ref_ns = m.ns > 1000 ? 1 : m.ns / 1000;
+            double refl = std::sqrt(4 * ref_ns) / 2;
             m.km = { refl, refl, refl };
 
             M.push_back(m);

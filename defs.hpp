@@ -162,11 +162,10 @@ inline vec3 operator*(const vec3& rhs, double sc) noexcept { return operator*(sc
 // Material
 struct mat
 {
-    // ambient, diffuse, specular, mirror coefficients (rgb)
+    // ambient, diffuse, specular, reflection coefficients (rgb)
     // range: [0, 1]
     vec3 ka, kd, ks, km;
     // specular (phong) exponent
-    // determine roughness from ns using 1000-2000x+1000x^{2}
     double ns;
 
     // Default for faces without material.
