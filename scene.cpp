@@ -5,12 +5,19 @@
 #include <iostream>
 #include <fstream>
 #include <sstream>
+#include <charconv>
 
 #include "defs.hpp"
 #include "rapidobj/rapidobj.hpp"
 
 
-SceneData::SceneData(const fs::path& scpath) : m_ok(false)
+static void scerror(int lineno, const char* msg)
+{
+    std::cerr << "line " << lineno;
+    std::cerr << ": " << msg << "\n";
+}
+
+SceneData::SceneData(const fs::path& scpath) : m_ok(false), C({0}), R(0, 0)
 {
     std::ifstream scfile(scpath);
     if (!scfile) {
@@ -21,127 +28,155 @@ SceneData::SceneData(const fs::path& scpath) : m_ok(false)
     auto scdir = scpath.parent_path();
     std::vector<fs::path> objpaths;
 
-    size_t sclinenum = 0;
+    int lineno = 0;
     std::string line;
     std::istringstream is;
     while (std::getline(scfile, line))
     {
-        if (line.empty())
-            continue;
+        lineno++;
+        if (line.empty()) { continue; }
 
         if (line == "camera")
         {
-            size_t cam_lnum = sclinenum;
             bool has_eye = false, 
                 has_uvw = false, 
                 has_focus = false, 
                 has_proj_size = false;
 
-            std::getline(scfile, line);
-            is.str(line);
-            if (line.starts_with("eye "))
+            while (std::getline(scfile, line))
             {
-                is.ignore(sizeof("eye ") - 1);
-                vec3& eye = C.eye;
-                is >> eye.x() >> eye.y() >> eye.z();
-                has_eye = true;
-            }
-            is.clear();
+                lineno++;
+                if (line.empty()) { break; }
+                is.str(line);
 
-            std::getline(scfile, line);
-            is.str(line);
-            if (line.starts_with("uvw ")) 
-            {
-                is.ignore(sizeof("uvw ") - 1);
-                vec3& u = C.u; vec3& v = C.v; vec3& w = C.w;
-                is >> u.x() >> u.y() >> u.z()
-                   >> v.x() >> v.y() >> v.z()
-                   >> w.x() >> w.y() >> w.z();
-                has_uvw = true;
-            }
-            is.clear();
+                if (line.starts_with("eye "))
+                {
+                    is.ignore(sizeof("eye ") - 1);
+                    vec3& eye = C.eye;
+                    is >> eye.x() >> eye.y() >> eye.z();
+                    has_eye = true;
+                }
+                else if (line.starts_with("uvw "))
+                {
+                    is.ignore(sizeof("uvw ") - 1);
+                    vec3& u = C.u; vec3& v = C.v; vec3& w = C.w;
+                    is >> u.x() >> u.y() >> u.z()
+                        >> v.x() >> v.y() >> v.z()
+                        >> w.x() >> w.y() >> w.z();
+                    has_uvw = true;
+                }
+                else if (line.starts_with("focal_len "))
+                {
+                    is.ignore(sizeof("focal_len ") - 1);
+                    is >> C.focal_len;
+                    if (C.focal_len <= 0) {
+                        scerror(lineno, "Invalid focal length");
+                        return;
+                    }
+                    has_focus = true;
+                }
+                else if (line.starts_with("proj_size "))
+                {
+                    is.ignore(sizeof("proj_size ") - 1);
+                    is >> C.width >> C.height;
+                    if (C.width <= 0 || C.height <= 0) {
+                        scerror(lineno, "Invalid projection size");
+                        return;
+                    }
+                    has_proj_size = true;
+                }
+                else { scerror(lineno, "ignored prop"); }
 
-            std::getline(scfile, line);
-            is.str(line);
-            if (line.starts_with("focal_len "))
-            {
-                is.ignore(sizeof("focal_len ") - 1);
-                is >> C.focal_len;
-                has_focus = true;
+                is.clear();
             }
-            is.clear();
-
-            std::getline(scfile, line);
-            is.str(line);
-            if (line.starts_with("proj_size "))
-            {
-                is.ignore(sizeof("proj_size ") - 1);
-                is >> C.height >> C.width;
-                has_proj_size = true;
-            }
-            is.clear();
-
             if (!has_eye || !has_uvw || !has_focus || !has_proj_size)
             {
-                std::cerr << "line " << cam_lnum;
-                std::cerr << "missing camera prop(s)\n";
+                scerror(lineno, "missing camera prop(s)");
                 return;
             }
         }
         else if (line.starts_with("light"))
         {
-            light lt;
-            size_t light_lnum = sclinenum;
+            light lt{ 0 };
             bool has_pos = false, has_rgb = false;
 
-            std::getline(scfile, line);
-            is.str(line);
-            if (line.starts_with("pos "))
+            while (std::getline(scfile, line))
             {
-                is.ignore(sizeof("pos ") - 1);
-                is >> lt.pos.x() >> lt.pos.y() >> lt.pos.z();
-                has_pos = true;
-            }
-            is.clear();
+                lineno++;
+                if (line.empty()) { break; }
+                is.str(line);
 
-            std::getline(scfile, line);
-            is.str(line);
-            if (line.starts_with("rgb "))
-            {
-                is.ignore(sizeof("rgb ") - 1);
-                is >> lt.rgb.x() >> lt.rgb.y() >> lt.rgb.z();
-                has_rgb = true;
-            }
-            is.clear();
+                if (line.starts_with("pos "))
+                {
+                    is.ignore(sizeof("pos ") - 1);
+                    is >> lt.pos.x() >> lt.pos.y() >> lt.pos.z();
+                    has_pos = true;
+                }
+                else if (line.starts_with("rgb "))
+                {
+                    is.ignore(sizeof("rgb ") - 1);
+                    is >> lt.rgb.x() >> lt.rgb.y() >> lt.rgb.z();
+                    if (lt.rgb.x() < 0 || lt.rgb.y() < 0 || lt.rgb.z() < 0) {
+                        scerror(lineno, "Color must be in [0,1]");
+                        return;
+                    }
+                    has_rgb = true;
+                }
+                else { scerror(lineno, "ignored prop"); }
 
-            if (!has_pos || !has_rgb)
-            {
-                std::cerr << "line " << light_lnum;
-                std::cerr << "missing light prop(s)\n";
+                is.clear();
+            }
+            if (!has_pos || !has_rgb) {
+                scerror(lineno, "missing light prop(s)");
                 return;
             }
+
             L.push_back(lt);
+        }
+        else if (line == "render") 
+        {
+            bool has_res = false;
+            while (std::getline(scfile, line)) 
+            {
+                lineno++;
+                if (line.empty()) { break; }
+                is.str(line);
+
+                if (line.starts_with("res "))
+                {
+                    is.ignore(sizeof("res ") - 1);
+                    is >> R.first >> R.second;
+                    has_res = true;
+                }
+                else { scerror(lineno, "ignored prop"); }
+
+                is.clear();
+            }
+            if (!has_res) {
+                scerror(lineno, "missing render prop(s)");
+                return;
+            }
         }
         else if (line == "obj")
         {
-            while (std::getline(scfile, line) && !line.empty()) {
+            while (std::getline(scfile, line)) {
+                lineno++;
+                if (line.empty()) { break; }
+
                 objpaths.push_back(scdir / fs::path(line));
             }
         }
-        sclinenum++;
     }
     scfile.close();
 
     // Parse obj + mtl files
     std::vector<int> missing_matFids;
-    for (size_t iobj = 0; iobj < objpaths.size(); ++iobj)
+    for (const auto& objpath : objpaths)
     {
-        auto& objpath = objpaths[iobj];
-
         rapidobj::Result res = rapidobj::ParseFile(objpath);
         if (res.error || !rapidobj::Triangulate(res))
         {
-            std::cerr << "obj" << iobj << " line " << res.error.line_num;
+            std::cerr << objpath << ", line " << res.error.line_num;
             std::cerr << ": " << res.error.code.message() << "\n";
             return;
         }
@@ -190,9 +225,9 @@ SceneData::SceneData(const fs::path& scpath) : m_ok(false)
         for (const auto& shape : res.shapes)
         {
             if (shape.lines.indices.size() != 0 ||
-                shape.points.indices.size() != 0)
+                shape.points.indices.size() != 0) 
             {
-                std::cerr << "obj" << iobj;
+                std::cerr << objpath;
                 std::cerr << ": polylines/points not supported";
                 return;
             }
@@ -240,8 +275,8 @@ SceneData::SceneData(const fs::path& scpath) : m_ok(false)
     if (missing_matFids.size() != 0) 
     {
         M.push_back(mat::default_mat());
-        int default_matid = int(M.size() - 1);
 
+        int default_matid = int(M.size() - 1);
         for (size_t i = 0; i < missing_matFids.size(); ++i) {
             MF[missing_matFids[i]] = default_matid;
         }
@@ -297,7 +332,7 @@ bool write_model(const char* obj_file, const char* mtl_file, SceneData& m)
 
 uint SceneData::nserial() const
 {
-    return nwordshdr + camera::nserial +
+    return Nwordshdr + camera::nserial +
         nsL() + nsV() + nsNV() + nsF() + nsNF() + nsM() + nsMF();
 }
 
@@ -307,16 +342,19 @@ void SceneData::serialize(uint* p) const
     /* numV  */ p[1] = uint(V.size());
     /* numF  */ p[2] = uint(F.size());
     /* numL  */ p[3] = uint(L.size());
-    /* Loff  */ p[4] = nwordshdr + camera::nserial;
+    /* Loff  */ p[4] = Nwordshdr + camera::nserial;
     /* Voff  */ p[5] = p[4] + nsL();
     /* NVoff */ p[6] = p[5] + nsV();
     /* Foff  */ p[7] = p[6] + nsNV();
     /* NFoff */ p[8] = p[7] + nsF();
     /* Moff  */ p[9] = p[8] + nsNF();
     /* MFoff */ p[10] = p[9] + nsM();
+    /* resX  */ p[11] = R.first;
+    /* resY  */ p[12] = R.second;
     
-    assert(p[10] + nsMF() == nserial());
-    p += nwordshdr;
+    assert(p[10] + nsMF() == nserial() 
+        && "Header size not set correctly");
+    p += Nwordshdr;
 
     C.serialize(p); 
     p += camera::nserial;

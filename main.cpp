@@ -1,12 +1,14 @@
 
-#include "defs.hpp"
 #include <cstdlib>
 #include <iostream>
+#include <memory>
 #include <fstream>
 #include <sstream>
 #include <cstdio>
+#include <charconv>
 
 #include "cxxopts/cxxopts.hpp"
+#include "defs.hpp"
 
 //#define TEST_MODELIO 0
 
@@ -38,7 +40,7 @@
 
 [[noreturn]] void bail(const char* msg)
 {
-    std::cerr << msg;
+    std::cerr << msg << "\n";
     std::exit(EXIT_FAILURE);
 }
 
@@ -47,9 +49,9 @@ int main(int argc, char** argv)
     cxxopts::Options opts("host", "Host-side of FPGA raytracer.");
     opts.add_options()
         ("h,help", "Show usage.")
-        ("i,infile", "Input model file (.obj).", cxxopts::value<std::string>(), "<infile>")
-        ("o,outfile", "Output serialized model (.bin or .h).", cxxopts::value<std::string>(), "<outfile>")
-        ("e,eswap", "Swap endianness.");
+        ("i,infile", "Input scene file (.scene)", cxxopts::value<std::string>(), "<infile>")
+        ("o,outfile", "Output serialized scene (.bin or .h)", cxxopts::value<std::string>(), "<outfile>")
+        ("e,eswap", "Swap endianness (only applies to binary file)");
 
     auto args = opts.parse(argc, argv);
     if (args["help"].as<bool>())
@@ -58,42 +60,77 @@ int main(int argc, char** argv)
         return EXIT_SUCCESS;
     }
 
-    if (args["infile"].count() == 0)
-        bail("error: no input file.\n");
+    if (args["infile"].count() == 0) {
+        bail("no input file");
+    }
+    if (args["outfile"].count() == 0) {
+        bail("no output file");
+    }
 
-    if (args["outfile"].count() == 0)
-        bail("error: no output file.\n");
+    fs::path inpath = args["infile"].as<std::string>();
+    fs::path outpath = args["outfile"].as<std::string>();
 
-    auto& infile = args["infile"].as<std::string>();
-    auto& outfile = args["outfile"].as<std::string>();
-
-    SceneData scene(infile);
-    if (!scene)
+    SceneData scene(inpath);
+    if (!scene) {
         return EXIT_FAILURE;
+    }
 
     BVTree bvh(scene);
-
-    std::ofstream outf(outfile, std::ios::binary);
-    if (!outf)
-        bail("error: could not open output file.\n");
+    if (!bvh) {
+        return EXIT_FAILURE;
+    }
 
     uint nsmodel = scene.nserial();
     uint nserial = nsmodel + bvh.nserial();
 
-    uint* buf = new uint[nserial];
-    scene.serialize(buf);
-    bvh.serialize(buf + nsmodel);
+    auto buf = std::make_unique<uint[]>(nserial);
+    scene.serialize(buf.get());
+    bvh.serialize(buf.get() + nsmodel);
 
-    // swap endianness
-    if (args["eswap"].as<bool>()) {
-        for (uint i = 0; i < nserial; ++i) {
-            buf[i] = bswap(buf[i]);
+    
+    // write file
+    std::ofstream outf(outpath, std::ios::binary);
+    if (!outf) {
+        bail("could not open output file");
+    }
+    auto outext = outpath.extension();
+    if (outext == ".bin" || outext.empty()) 
+    {
+        // swap endianness
+        if (args["eswap"].as<bool>()) {
+            for (uint i = 0; i < nserial; ++i) {
+                buf[i] = bswap(buf[i]);
+            }
         }
+        outf.write((const char*)buf.get(), 4 * nserial);
+    }
+    else if (outext == ".h") 
+    {
+        std::string out = "static const int bin[] = {";
+        
+        char strbuf[10] = { '0', 'x' };
+        char* const begin = strbuf + 2;
+
+        for (uint i = 0; i < nserial; ++i)
+        {
+            if (i % 12 == 0) { 
+                out.append("\n    "); 
+            }
+            auto ret = std::to_chars(begin, std::end(strbuf), buf[i], 16);
+
+            ptrdiff_t nchars = ret.ptr - begin;
+            std::memmove(std::end(strbuf) - nchars, begin, nchars);
+            std::memset(begin, '0', 8 - nchars);
+
+            out.append(strbuf, 10);
+            if (i != nserial - 1) {
+                out.append(", ");
+            }
+        }
+        out.append("\n};\n");
+
+        outf.write(out.c_str(), out.length());
     }
 
-    outf.write((const char *)buf, 4 * nserial);
-    outf.close();
-
-    delete[] buf;
     return EXIT_SUCCESS;
 }

@@ -241,8 +241,9 @@ struct SceneData
     SceneData(const fs::path& scene_path);
 
     // scene
-    camera C;
+    camera C; // camera
     std::vector<light> L; // lights
+    std::pair<uint, uint> R; // resolution
     
     // geometry
     std::vector<vec3> V; // Vertices 
@@ -266,7 +267,7 @@ struct SceneData
     void serialize(uint* buf) const;
 
 private:
-    static constexpr int nwordshdr = 11; // # words in header
+    static constexpr int Nwordshdr = 13; // # words in header
 
     // sizes of each member when serialized
     uint nsL()  const { return uint(L.size() * light::nserial); }
@@ -277,6 +278,7 @@ private:
     uint nsM()  const { return uint(M.size() * mat::nserial); }
     uint nsMF() const { return uint(MF.size()); }
 
+private:
     bool m_ok;
 };
 
@@ -348,11 +350,15 @@ struct BVTree
     
     BVNode* root() { return m_root; }
 
+    bool ok() const { return m_ok; }
+    operator bool() const { return ok(); }
+
     uint nserial() const;
     void serialize(uint* buf) const;
 
 private:
     BVNode* m_root;
+    bool m_ok;
 };
 
 #endif

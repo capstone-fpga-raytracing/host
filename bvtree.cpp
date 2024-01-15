@@ -121,7 +121,7 @@ static uint* tree_serialize(BVNode* root, uint* const beg, uint* p)
     return p;
 }
 
-BVTree::BVTree(const SceneData& m)
+BVTree::BVTree(const SceneData& m) : m_ok(false)
 {
     // triangle nodes.
     // these are the leaves
@@ -141,6 +141,7 @@ BVTree::BVTree(const SceneData& m)
     }
 
     m_root = tree_create(tris.begin(), tris.end());
+    m_ok = true;
 }
 
 BVTree::~BVTree() { tree_delete(m_root); }

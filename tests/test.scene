@@ -1,11 +1,14 @@
 obj
 test.obj
 
+render
+res 320 240
+
 camera
 eye 7.0827 -3.4167 7.4254
 uvw 1 1 0 -1 1 1.41421356 1 -1 1.41421356
 focal_len 5
-proj_size 2.7 3.6
+proj_size 3.6 2.7
 
 light // yellow
 pos 3.6746 2.0055 3.1325
