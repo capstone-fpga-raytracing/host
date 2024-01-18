@@ -18,35 +18,6 @@
     std::exit(EXIT_FAILURE);
 }
 
-struct serialscene
-{
-    std::unique_ptr<uint[]> buf;
-    size_t size;   
-    // resolution
-    uint resX, resY;
-};
-
-bool sc_serialize(const fs::path& path, serialscene& s)
-{
-    SceneData scene(path);
-    if (!scene) { return false; }
-
-    BVTree btree(scene);
-    if (!btree) { return false; }
-
-    uint nscene = scene.nserial();
-    uint ntotal = nscene + btree.nserial();
-
-    s.buf = std::make_unique<uint[]>(ntotal);
-    scene.serialize(s.buf.get());
-    btree.serialize(s.buf.get() + nscene);
-
-    s.size = ntotal;
-    s.resX = scene.R.first;
-    s.resY = scene.R.second;
-    return true;
-}
-
 int main(int argc, char** argv)
 {
     // this library is slow but is also very convenient.
@@ -90,11 +61,29 @@ int main(int argc, char** argv)
 
     fs::path inpath = args["in"].as<std::string>();
 
-    serialscene S;   
+    struct serialscene
+    {
+        std::unique_ptr<uint[]> buf;
+        size_t size;
+    } S;
+    std::pair<uint, uint> res; // resolution
     if (inpath.extension() == ".scene")
     {
-        if (!sc_serialize(inpath, S)) 
-        { bail("failed to serialize scene"); }
+        SceneData scene(inpath);
+        if (!scene) { return EXIT_FAILURE; }
+
+        BVTree btree(scene);
+        if (!btree) { return EXIT_FAILURE; }
+
+        uint nscene = scene.nserial();
+        uint ntotal = nscene + btree.nserial();
+
+        S.buf = std::make_unique<uint[]>(ntotal);
+        scene.serialize(S.buf.get());
+        btree.serialize(S.buf.get() + nscene);
+
+        S.size = ntotal;
+        res = scene.R;
     } 
     else {
         if (tobin && !swap_endian) {
@@ -191,7 +180,7 @@ int main(int argc, char** argv)
             bail("failed to receive image");
         }
 
-        if (!write_bmp(tcp_name.c_str(), data, S.resX, S.resY, 3)) {
+        if (!write_bmp(tcp_name.c_str(), data, res.first, res.second, 3)) {
             bail("failed to save image");
         }
 
