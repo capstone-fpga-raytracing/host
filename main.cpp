@@ -1,41 +1,15 @@
 
 #include <cstdlib>
+#include <cstdio>
 #include <iostream>
 #include <memory>
 #include <fstream>
-#include <sstream>
-#include <cstdio>
 #include <charconv>
 
 #include "cxxopts/cxxopts.hpp"
 #include "defs.hpp"
 
-//#define TEST_MODELIO 0
-
-// old test scene
-// These numbers mostly from blender
-//scene.C.eye = { 8.4585f, -2.5662f, 10.108f };
-//scene.C.eye = { 7.0827, -3.4167, 7.4254 };
-//scene.C.focal_len = 5;
-//scene.C.width = 3.6;
-//scene.C.height = scene.C.width * (240. / 320.); // 320x240 render  
-//scene.C.u = { 1, 1, 0 };
-//scene.C.v = { -1, 1, std::sqrt(2) };
-//scene.C.w = { 1, -1, std::sqrt(2) };
-//
-//light l1, l2;
-////l1.pos = { 0.9502, 1.953, 4.1162 };
-////l2.pos = { -2.24469, 1.953, 4.1162 };  
-//l1.pos = { 3.6746, 2.0055, 3.1325 };
-//l2.pos = { 1.5699, 0.87056, 3.1325 };
-//
-////l1.rgb = { 1, 1, 0 }; // yellow
-////l2.rgb = { 1, 1, 0 }; // yellow
-//l1.rgb = { 1, 1, 1 }; // white
-//l2.rgb = { 1, 1, 1 }; // white
-//
-//scene.L.push_back(l1);
-//scene.L.push_back(l2);
+#include "io.h"
 
 
 [[noreturn]] void bail(const char* msg)
@@ -44,14 +18,47 @@
     std::exit(EXIT_FAILURE);
 }
 
+struct serialscene
+{
+    std::unique_ptr<uint[]> buf;
+    size_t size;
+    
+    // resolution
+    uint resX, resY;
+};
+
+bool sc_serialize(const fs::path& path, serialscene& s)
+{
+    SceneData scene(path);
+    if (!scene) { return false; }
+
+    BVTree btree(scene);
+    if (!btree) { return false; }
+
+    uint nscene = scene.nserial();
+    uint ntotal = nscene + btree.nserial();
+
+    s.buf = std::make_unique<uint[]>(ntotal);
+    scene.serialize(s.buf.get());
+    btree.serialize(s.buf.get() + nscene);
+
+    s.size = ntotal;
+    s.resX = scene.R.first;
+    s.resY = scene.R.second;
+    return true;
+}
+
 int main(int argc, char** argv)
 {
     cxxopts::Options opts("host", "Host-side of FPGA raytracer.");
     opts.add_options()
         ("h,help", "Show usage.")
-        ("i,infile", "Input scene file (.scene)", cxxopts::value<std::string>(), "<infile>")
-        ("o,outfile", "Output serialized scene (.bin or .h)", cxxopts::value<std::string>(), "<outfile>")
-        ("e,eswap", "Swap endianness (only applies to binary file)");
+        ("i,in", "Input scene (.scene or .bin).", cxxopts::value<std::string>(), "<file>")
+        ("f,tofpga", "Send scene to FPGA for raytracing and save returned image."
+            "Faster if scene is in binary format.", cxxopts::value<std::vector<std::string>>(), "<ipaddr>, <port>")
+        ("b,tobin", "Serialize .scene to binary format.", cxxopts::value<std::string>(), "<file>")
+        ("c,tohdr", "Convert scene into C header.", cxxopts::value<std::string>(), "<file>")
+        ("e,eswap", "Swap endianness.");
 
     auto args = opts.parse(argc, argv);
     if (args["help"].as<bool>())
@@ -60,77 +67,132 @@ int main(int argc, char** argv)
         return EXIT_SUCCESS;
     }
 
-    if (args["infile"].count() == 0) {
+    if (args["in"].count() == 0) {
         bail("no input file");
     }
-    if (args["outfile"].count() == 0) {
-        bail("no output file");
-    }
-
-    fs::path inpath = args["infile"].as<std::string>();
-    fs::path outpath = args["outfile"].as<std::string>();
-
-    SceneData scene(inpath);
-    if (!scene) {
-        return EXIT_FAILURE;
-    }
-
-    BVTree bvh(scene);
-    if (!bvh) {
-        return EXIT_FAILURE;
-    }
-
-    uint nsmodel = scene.nserial();
-    uint nserial = nsmodel + bvh.nserial();
-
-    auto buf = std::make_unique<uint[]>(nserial);
-    scene.serialize(buf.get());
-    bvh.serialize(buf.get() + nsmodel);
-
     
-    // write file
-    std::ofstream outf(outpath, std::ios::binary);
-    if (!outf) {
-        bail("could not open output file");
+    bool tobin = args["tobin"].count() != 0;
+    bool tohdr = args["tohdr"].count() != 0;
+    bool tofpga = args["tofpga"].count() != 0;
+    bool swap_endian = args["eswap"].as<bool>();
+
+    int tototal = int(tobin) + int(tohdr) + int(tofpga);
+    if (tototal != 1) { 
+        bail("provide one of tobin, tohdr, or tofpga"); 
     }
-    auto outext = outpath.extension();
-    if (outext == ".bin" || outext.empty()) 
+
+    fs::path inpath = args["in"].as<std::string>();
+
+    serialscene S;   
+    if (inpath.extension() == ".scene")
     {
-        // swap endianness
-        if (args["eswap"].as<bool>()) {
-            for (uint i = 0; i < nserial; ++i) {
-                buf[i] = bswap(buf[i]);
-            }
+        if (!sc_serialize(inpath, S)) 
+        { bail("failed to serialize scene"); }
+    } 
+    else {
+        if (tobin && !swap_endian) {
+            bail("scene is already in binary format");
         }
-        outf.write((const char*)buf.get(), 4 * nserial);
+
+        S.size = fs::file_size(inpath) / 4;
+        S.buf = std::make_unique<uint[]>(S.size);
+
+        scopedFILE f = SAFE_FOPEN(inpath.c_str(), "rb");
+        if (!f) { bail("could not open input file"); }
+
+        if (std::fread(S.buf.get(), 4, S.size, f.get()) != S.size) {
+            bail("could not read input file");
+        }
     }
-    else if (outext == ".h") 
+    if (swap_endian && !tohdr)
     {
+        for (uint i = 0; i < S.size; ++i) {
+            S.buf[i] = bswap(S.buf[i]);
+        }
+    }
+
+    if (tobin)
+    {
+        auto& outpath = args["tobin"].as<std::string>();
+
+        scopedFILE f = SAFE_AFOPEN(outpath.c_str(), "wb");
+        if (!f) { bail("could not open output file"); }
+
+        if (std::fwrite(S.buf.get(), 4, S.size, f.get()) != S.size) {
+            bail("could not write output file");
+        }
+    }
+    else if (tohdr)
+    {
+        auto& outpath = args["tohdr"].as<std::string>();
+
         std::string out = "static const int bin[] = {";
-        
+
         char strbuf[10] = { '0', 'x' };
         char* const begin = strbuf + 2;
 
-        for (uint i = 0; i < nserial; ++i)
+        for (uint i = 0; i < S.size; ++i)
         {
-            if (i % 12 == 0) { 
-                out.append("\n    "); 
+            if (i % 12 == 0) {
+                out.append("\n    ");
             }
-            auto ret = std::to_chars(begin, std::end(strbuf), buf[i], 16);
+            auto ret = std::to_chars(begin, std::end(strbuf), S.buf[i], 16);
 
             ptrdiff_t nchars = ret.ptr - begin;
             std::memmove(std::end(strbuf) - nchars, begin, nchars);
             std::memset(begin, '0', 8 - nchars);
 
             out.append(strbuf, 10);
-            if (i != nserial - 1) {
+            if (i != S.size - 1) {
                 out.append(", ");
             }
         }
         out.append("\n};\n");
 
-        outf.write(out.c_str(), out.length());
+        scopedFILE f = SAFE_AFOPEN(outpath.c_str(), "wb");
+        if (!f) { bail("could not open output file"); }
+
+        if (std::fwrite(out.c_str(), 1, out.length(), f.get()) != out.length()) {
+            bail("could not write output file");
+        }
+    }
+    else if (tofpga)
+    {
+        auto& fpga_args = args["tofpga"].as<std::vector<std::string>>();
+
+        size_t nargs = fpga_args.size();
+        if (nargs != 2) {
+            bail("missing or extra arguments");
+        }
+
+        std::string tcp_name = inpath.filename().generic_string();
+        const char* addr = fpga_args[0].c_str();
+        const char* port = fpga_args[1].c_str();
+
+        std::cout << "Sending " << tcp_name << " to FPGA...\n";
+        if (TCP_send((byte*)S.buf.get(), uint(S.size * 4), tcp_name.c_str(), addr, port) != 0) {
+            bail("failed to send scene");
+        }
+
+        std::cout << "Waiting for image...\n";
+
+        byte* data; char* name;
+        int nrecv = TCP_recv(&data, &name, port, false);
+
+        auto data_s = scoped_mallocptr<byte[]>(data);
+        auto name_s = scoped_mallocptr<char[]>(name);
+
+        if (nrecv < 0 || std::strcmp(name, tcp_name.c_str()) != 0) {
+            bail("failed to receive image");
+        }
+
+        if (!write_bmp(tcp_name.c_str(), data, S.resX, S.resY, 3)) {
+            bail("failed to save image");
+        }
+
+        std::cout << "done.";
     }
 
     return EXIT_SUCCESS;
+    
 }

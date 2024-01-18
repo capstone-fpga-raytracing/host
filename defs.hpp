@@ -1,15 +1,15 @@
-// fixed point values are perfectly accurate until 53 bits.
-// see https://stackoverflow.com/questions/1848700/biggest-integer-that-can-be-stored-in-a-double
 
 #ifndef HOST_DEFS_HPP
 #define HOST_DEFS_HPP
 
 #include <cstring>
 #include <cassert>
+#include <cstdio>
 #include <cmath>
 #include <vector>
 #include <array>
 #include <limits>
+#include <memory>
 #include <ranges>
 #include <algorithm>
 #include <filesystem>
@@ -17,7 +17,11 @@
 #include <bit>
 #endif
 
+#include "rapidobj/rapidobj.hpp"
+
+
 #define ENABLE_TEXTURES 0
+#define CONCAT(x, y) x##y
 
 namespace ranges = std::ranges;
 namespace fs = std::filesystem;
@@ -25,6 +29,28 @@ namespace fs = std::filesystem;
 using uint = unsigned int;
 using byte = unsigned char;
 static_assert(std::numeric_limits<int>::digits == 31, "int is not 32-bit");
+
+
+using scopedFILE = std::unique_ptr<std::FILE, int(*)(std::FILE*)>;
+
+template <typename T>
+using scopedMallocPtr = std::unique_ptr<T, void(*)(void*)>;
+
+//
+// On Linux, ifstream.read() and fread() are just as fast.
+// On Windows, fread() is about 2x as fast as ifstream.read()
+// https://gist.github.com/mayawarrier/7ed71f1f91a7f8588b7f8bd96a561892
+//
+#ifdef _MSC_VER
+#define SAFE_AFOPEN(fname, mode) scopedFILE(std::fopen(fname, mode), std::fclose)
+#define SAFE_FOPEN(fname, mode) scopedFILE(::_wfopen(fname, CONCAT(L, mode)), std::fclose)
+#else
+#define SAFE_AFOPEN(fname, mode) scopedFILE(std::fopen(fname, mode), std::fclose)
+#define SAFE_FOPEN(fname, mode) SAFE_AFOPEN(fname, mode)
+#endif
+
+template <typename T, typename Ptr>
+scopedMallocPtr<T> scoped_mallocptr(Ptr ptr) { return { ptr, std::free }; }
 
 
 inline uint to_fixedpt(double val)

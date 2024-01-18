@@ -8,7 +8,6 @@
 #include <charconv>
 
 #include "defs.hpp"
-#include "rapidobj/rapidobj.hpp"
 
 
 static void scerror(int lineno, const char* msg)
@@ -366,3 +365,28 @@ void SceneData::serialize(uint* p) const
     p = vserialize(M, p);
     p = vserialize(MF, p);
 }
+
+// old test scene
+// These numbers mostly from blender
+//scene.C.eye = { 8.4585f, -2.5662f, 10.108f };
+//scene.C.eye = { 7.0827, -3.4167, 7.4254 };
+//scene.C.focal_len = 5;
+//scene.C.width = 3.6;
+//scene.C.height = scene.C.width * (240. / 320.); // 320x240 render  
+//scene.C.u = { 1, 1, 0 };
+//scene.C.v = { -1, 1, std::sqrt(2) };
+//scene.C.w = { 1, -1, std::sqrt(2) };
+//
+//light l1, l2;
+////l1.pos = { 0.9502, 1.953, 4.1162 };
+////l2.pos = { -2.24469, 1.953, 4.1162 };  
+//l1.pos = { 3.6746, 2.0055, 3.1325 };
+//l2.pos = { 1.5699, 0.87056, 3.1325 };
+//
+////l1.rgb = { 1, 1, 0 }; // yellow
+////l2.rgb = { 1, 1, 0 }; // yellow
+//l1.rgb = { 1, 1, 1 }; // white
+//l2.rgb = { 1, 1, 1 }; // white
+//
+//scene.L.push_back(l1);
+//scene.L.push_back(l2);
