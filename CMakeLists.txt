@@ -1,9 +1,9 @@
-cmake_minimum_required(VERSION 3.12)
+cmake_minimum_required(VERSION 3.14)
 project(capstone_host)
 
-add_executable(host main.cpp "scene.cpp" "defs.hpp" "bvtree.cpp")
-#target_include_directories(host PRIVATE eigen-3.4.0)
-target_include_directories(host PRIVATE cxxopts/include)
+add_executable(host "main.cpp" "scene.cpp" "defs.hpp" "bvtree.cpp")
+target_include_directories(host PRIVATE ext/cxxopts/include)
+target_include_directories(host PRIVATE ext/IO)
 
 set_property(TARGET host PROPERTY CXX_STANDARD 23)
 set_property(TARGET host PROPERTY CXX_STANDARD_REQUIRED)
@@ -17,11 +17,3 @@ FetchContent_Declare(rapidobj
 FetchContent_MakeAvailable(rapidobj)
 
 target_link_libraries(host PRIVATE rapidobj::rapidobj)
-
-add_custom_command(
-	TARGET host
-	POST_BUILD
-	COMMAND ${CMAKE_COMMAND} -E copy_directory
-		${CMAKE_CURRENT_SOURCE_DIR}/tests
-		${CMAKE_CURRENT_BINARY_DIR}/tests
-)
