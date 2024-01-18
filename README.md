@@ -1,9 +1,10 @@
 # host
 
-Implements 3D model file reading/writing + creation of bounding-volume tree.
-
-3D Model file reading/writing has been tested.
-Bounding volume tree has not been tested properly yet (but seems to work).
+Responsible for:
+- Reading and writing 3D scene files
+- Creating the bounding-volume tree to acclerate spatial queries
+- Serializing the scene into a compact binary format
+- Transmitting the scene to FPGA, receiving and saving returned image
 
 
 ## Windows
