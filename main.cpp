@@ -21,8 +21,7 @@
 struct serialscene
 {
     std::unique_ptr<uint[]> buf;
-    size_t size;
-    
+    size_t size;   
     // resolution
     uint resX, resY;
 };
@@ -50,6 +49,7 @@ bool sc_serialize(const fs::path& path, serialscene& s)
 
 int main(int argc, char** argv)
 {
+    // this library is slow but is also very convenient.
     cxxopts::Options opts("host", "Host-side of FPGA raytracer.");
     opts.add_options()
         ("h,help", "Show usage.")
@@ -60,7 +60,14 @@ int main(int argc, char** argv)
         ("c,tohdr", "Convert scene into C header.", cxxopts::value<std::string>(), "<file>")
         ("e,eswap", "Swap endianness.");
 
-    auto args = opts.parse(argc, argv);
+    cxxopts::ParseResult args;
+    try {
+        args = opts.parse(argc, argv);
+    }
+    catch (std::exception& e) {
+        bail(e.what());
+    }
+    
     if (args["help"].as<bool>())
     {
         std::cout << opts.help();
@@ -159,9 +166,7 @@ int main(int argc, char** argv)
     else if (tofpga)
     {
         auto& fpga_args = args["tofpga"].as<std::vector<std::string>>();
-
-        size_t nargs = fpga_args.size();
-        if (nargs != 2) {
+        if (fpga_args.size() != 2) {
             bail("missing or extra arguments");
         }
 
