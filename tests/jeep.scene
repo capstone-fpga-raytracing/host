@@ -2,7 +2,7 @@ obj
 jeep.obj
 
 render
-res 320 240
+res 1920 1080
 
 camera
 eye 7.0827 -3.4167 7.4254
