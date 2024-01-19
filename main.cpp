@@ -12,11 +12,12 @@
 #include "io.h"
 
 
-[[noreturn]] void bail(const char* msg)
-{
-    std::cerr << msg << "\n";
-    std::exit(EXIT_FAILURE);
-}
+#define BAIL(msg) \
+    do { \
+        std::cerr << msg << "\n"; \
+        return EXIT_FAILURE; \
+    } while (0)
+
 
 int main(int argc, char** argv)
 {
@@ -26,7 +27,7 @@ int main(int argc, char** argv)
         ("h,help", "Show usage.")
         ("i,in", "Input scene (.scene or .bin).", cxxopts::value<std::string>(), "<file>")
         ("f,tofpga", "Send scene to FPGA for raytracing and save returned image."
-            "Faster if scene is in binary format.", cxxopts::value<std::vector<std::string>>(), "<ipaddr>, <port>")
+            "Faster if scene is in binary format.", cxxopts::value<std::vector<std::string>>(), "<ipaddr>,<port>")
         ("b,tobin", "Serialize .scene to binary format.", cxxopts::value<std::string>(), "<file>")
         ("c,tohdr", "Convert scene into C header.", cxxopts::value<std::string>(), "<file>")
         ("e,eswap", "Swap endianness.");
@@ -36,7 +37,7 @@ int main(int argc, char** argv)
         args = opts.parse(argc, argv);
     }
     catch (std::exception& e) {
-        bail(e.what());
+        BAIL(e.what());
     }
     
     if (args["help"].as<bool>())
@@ -46,7 +47,7 @@ int main(int argc, char** argv)
     }
 
     if (args["in"].count() == 0) {
-        bail("no input file");
+        BAIL("no input file");
     }
     
     bool tobin = args["tobin"].count() != 0;
@@ -56,7 +57,7 @@ int main(int argc, char** argv)
 
     int tototal = int(tobin) + int(tohdr) + int(tofpga);
     if (tototal != 1) { 
-        bail("provide one of tobin, tohdr, or tofpga"); 
+        BAIL("provide one of tobin, tohdr, or tofpga"); 
     }
 
     fs::path inpath = args["in"].as<std::string>();
@@ -87,17 +88,17 @@ int main(int argc, char** argv)
     } 
     else {
         if (tobin && !swap_endian) {
-            bail("scene is already in binary format");
+            BAIL("scene is already in binary format");
         }
 
         S.size = fs::file_size(inpath) / 4;
         S.buf = std::make_unique<uint[]>(S.size);
 
         scopedFILE f = SAFE_FOPEN(inpath.c_str(), "rb");
-        if (!f) { bail("could not open input file"); }
+        if (!f) { BAIL("could not open input file"); }
 
         if (std::fread(S.buf.get(), 4, S.size, f.get()) != S.size) {
-            bail("could not read input file");
+            BAIL("could not read input file");
         }
     }
     if (swap_endian && !tohdr)
@@ -112,10 +113,10 @@ int main(int argc, char** argv)
         auto& outpath = args["tobin"].as<std::string>();
 
         scopedFILE f = SAFE_AFOPEN(outpath.c_str(), "wb");
-        if (!f) { bail("could not open output file"); }
+        if (!f) { BAIL("could not open output file"); }
 
         if (std::fwrite(S.buf.get(), 4, S.size, f.get()) != S.size) {
-            bail("could not write output file");
+            BAIL("could not write output file");
         }
     }
     else if (tohdr)
@@ -146,26 +147,26 @@ int main(int argc, char** argv)
         out.append("\n};\n");
 
         scopedFILE f = SAFE_AFOPEN(outpath.c_str(), "wb");
-        if (!f) { bail("could not open output file"); }
+        if (!f) { BAIL("could not open output file"); }
 
         if (std::fwrite(out.c_str(), 1, out.length(), f.get()) != out.length()) {
-            bail("could not write output file");
+            BAIL("could not write output file");
         }
     }
     else if (tofpga)
     {
         auto& fpga_args = args["tofpga"].as<std::vector<std::string>>();
         if (fpga_args.size() != 2) {
-            bail("missing or extra arguments");
+            BAIL("missing or extra arguments");
         }
 
-        std::string tcp_name = inpath.filename().generic_string();
+        std::string tcp_name = inpath.filename().string();
         const char* addr = fpga_args[0].c_str();
         const char* port = fpga_args[1].c_str();
 
         std::cout << "Sending " << tcp_name << " to FPGA...\n";
         if (TCP_send((byte*)S.buf.get(), uint(S.size * 4), tcp_name.c_str(), addr, port) != 0) {
-            bail("failed to send scene");
+            BAIL("failed to send scene");
         }
 
         std::cout << "Waiting for image...\n";
@@ -177,11 +178,11 @@ int main(int argc, char** argv)
         auto name_s = scoped_mallocptr<char[]>(name);
 
         if (nrecv < 0 || std::strcmp(name, tcp_name.c_str()) != 0) {
-            bail("failed to receive image");
+            BAIL("failed to receive image");
         }
 
-        if (!write_bmp(tcp_name.c_str(), data, res.first, res.second, 3)) {
-            bail("failed to save image");
+        if (!write_bmp(tcp_name.c_str(), data, res.first, res.second, 3)) { 
+            BAIL("failed to save image");
         }
 
         std::cout << "done.";
