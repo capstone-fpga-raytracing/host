@@ -30,7 +30,6 @@ using uint = unsigned int;
 using byte = unsigned char;
 static_assert(std::numeric_limits<int>::digits == 31, "int is not 32-bit");
 
-
 using scopedFILE = std::unique_ptr<std::FILE, int(*)(std::FILE*)>;
 
 template <typename T>
@@ -52,6 +51,12 @@ using scopedMallocPtr = std::unique_ptr<T, void(*)(void*)>;
 template <typename T, typename Ptr>
 scopedMallocPtr<T> scoped_mallocptr(Ptr ptr) { return { ptr, std::free }; }
 
+
+#define WS " \t\n\r\f\v"
+
+inline void rtrim(std::string& str) {
+    str.erase(str.find_last_not_of(WS) + 1);
+}
 
 inline uint to_fixedpt(double val)
 {

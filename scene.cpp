@@ -18,7 +18,7 @@ static void scerror(int lineno, const char* msg)
 
 SceneData::SceneData(const fs::path& scpath) : m_ok(false), C({0}), R(0, 0)
 {
-    std::ifstream scfile(scpath);
+    std::ifstream scfile(scpath, std::ios::binary);
     if (!scfile) {
         std::cerr << "could not open scene file\n";
         return;
@@ -32,6 +32,7 @@ SceneData::SceneData(const fs::path& scpath) : m_ok(false), C({0}), R(0, 0)
     std::istringstream is;
     while (std::getline(scfile, line))
     {
+        rtrim(line);
         lineno++;
         if (line.empty()) { continue; }
 
@@ -44,6 +45,7 @@ SceneData::SceneData(const fs::path& scpath) : m_ok(false), C({0}), R(0, 0)
 
             while (std::getline(scfile, line))
             {
+                rtrim(line);
                 lineno++;
                 if (line.empty()) { break; }
                 is.str(line);
@@ -101,6 +103,7 @@ SceneData::SceneData(const fs::path& scpath) : m_ok(false), C({0}), R(0, 0)
 
             while (std::getline(scfile, line))
             {
+                rtrim(line);
                 lineno++;
                 if (line.empty()) { break; }
                 is.str(line);
@@ -137,6 +140,7 @@ SceneData::SceneData(const fs::path& scpath) : m_ok(false), C({0}), R(0, 0)
             bool has_res = false;
             while (std::getline(scfile, line)) 
             {
+                rtrim(line);
                 lineno++;
                 if (line.empty()) { break; }
                 is.str(line);
@@ -158,7 +162,9 @@ SceneData::SceneData(const fs::path& scpath) : m_ok(false), C({0}), R(0, 0)
         }
         else if (line == "obj")
         {
-            while (std::getline(scfile, line)) {
+            while (std::getline(scfile, line)) 
+            {
+                rtrim(line);
                 lineno++;
                 if (line.empty()) { break; }
 
