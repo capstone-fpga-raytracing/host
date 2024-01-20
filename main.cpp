@@ -3,7 +3,6 @@
 #include <cstdio>
 #include <iostream>
 #include <memory>
-#include <fstream>
 #include <charconv>
 
 #include "cxxopts/cxxopts.hpp"
@@ -18,16 +17,17 @@
         return EXIT_FAILURE; \
     } while (0)
 
-
 int main(int argc, char** argv)
 {
+    auto tbeg = chrono::high_resolution_clock::now();
+
     // this library is slow but is also very convenient.
     cxxopts::Options opts("host", "Host-side of FPGA raytracer.");
     opts.add_options()
         ("h,help", "Show usage.")
         ("i,in", "Input scene (.scene or .bin).", cxxopts::value<std::string>(), "<file>")
         ("f,tofpga", "Send scene to FPGA for raytracing and save returned image."
-            "Faster if scene is in binary format.", cxxopts::value<std::vector<std::string>>(), "<ipaddr>,<port>")
+            " Faster if scene is in binary format.", cxxopts::value<std::vector<std::string>>(), "<ipaddr>,<port>")
         ("b,tobin", "Serialize .scene to binary format.", cxxopts::value<std::string>(), "<file>")
         ("c,tohdr", "Convert scene into C header.", cxxopts::value<std::string>(), "<file>")
         ("e,eswap", "Swap endianness.");
@@ -62,11 +62,7 @@ int main(int argc, char** argv)
 
     fs::path inpath = args["in"].as<std::string>();
 
-    struct serialscene
-    {
-        std::unique_ptr<uint[]> buf;
-        size_t size;
-    } S;
+    BufWithSize<uint> S; // serialized scene
     std::pair<uint, uint> res; // resolution
     if (inpath.extension() == ".scene")
     {
@@ -79,11 +75,11 @@ int main(int argc, char** argv)
         uint nscene = scene.nserial();
         uint ntotal = nscene + btree.nserial();
 
-        S.buf = std::make_unique<uint[]>(ntotal);
+        S.size = ntotal;
+        S.buf = std::make_unique<uint[]>(S.size);
         scene.serialize(S.buf.get());
         btree.serialize(S.buf.get() + nscene);
 
-        S.size = ntotal;
         res = scene.R;
     } 
     else {
@@ -184,9 +180,18 @@ int main(int argc, char** argv)
         if (!write_bmp(tcp_name.c_str(), data, res.first, res.second, 3)) { 
             BAIL("failed to save image");
         }
-
-        std::cout << "done.";
     }
+
+    auto tend = chrono::high_resolution_clock::now();
+    auto ttaken = tend - tbeg;
+
+    std::cout << "Done in ";
+    if (ttaken > chrono::milliseconds(1)) { // chrono format does not work on gcc, use count
+        std::cout << chrono::duration_cast<chrono::milliseconds>(ttaken).count() << "ms";
+    } else { 
+        std::cout << chrono::duration_cast<chrono::microseconds>(ttaken).count() << "us";
+    }
+    std::cout << ".\n";
 
     return EXIT_SUCCESS;
     

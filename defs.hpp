@@ -4,80 +4,15 @@
 
 #include <cstring>
 #include <cassert>
-#include <cstdio>
 #include <cmath>
+#include <limits>
 #include <vector>
 #include <array>
-#include <limits>
-#include <memory>
-#include <ranges>
-#include <algorithm>
-#include <filesystem>
-#ifdef _MSC_VER
-#include <bit>
-#endif
 
 #include "rapidobj/rapidobj.hpp"
+#include "utils.hpp"
 
-
-#define ENABLE_TEXTURES 0
-#define CONCAT(x, y) x##y
-
-namespace ranges = std::ranges;
-namespace fs = std::filesystem;
-
-using uint = unsigned int;
-using byte = unsigned char;
-static_assert(std::numeric_limits<int>::digits == 31, "int is not 32-bit");
-
-using scopedFILE = std::unique_ptr<std::FILE, int(*)(std::FILE*)>;
-
-template <typename T>
-using scopedMallocPtr = std::unique_ptr<T, void(*)(void*)>;
-
-//
-// On Linux, ifstream.read() and fread() are just as fast.
-// On Windows, fread() is about 2x as fast as ifstream.read()
-// https://gist.github.com/mayawarrier/7ed71f1f91a7f8588b7f8bd96a561892
-//
-#ifdef _MSC_VER
-#define SAFE_AFOPEN(fname, mode) scopedFILE(std::fopen(fname, mode), std::fclose)
-#define SAFE_FOPEN(fname, mode) scopedFILE(::_wfopen(fname, CONCAT(L, mode)), std::fclose)
-#else
-#define SAFE_AFOPEN(fname, mode) scopedFILE(std::fopen(fname, mode), std::fclose)
-#define SAFE_FOPEN(fname, mode) SAFE_AFOPEN(fname, mode)
-#endif
-
-template <typename T, typename Ptr>
-scopedMallocPtr<T> scoped_mallocptr(Ptr ptr) { return { ptr, std::free }; }
-
-
-#define WS " \t\n\r\f\v"
-
-inline void rtrim(std::string& str) {
-    str.erase(str.find_last_not_of(WS) + 1);
-}
-
-inline uint to_fixedpt(double val)
-{
-    return uint(std::lround(val * (1 << 16)));
-}
-
-inline double from_fixedpt(uint val)
-{
-    // int(val) interprets the bits of val as a signed number, 
-    // which only works from c++20 onwards
-    return double(int(val)) / (1 << 16);
-}
-
-inline uint bswap(uint v)
-{
-#ifdef _MSC_VER
-    return std::byteswap(v);
-#else
-    return __builtin_bswap32(v);
-#endif
-}
+static_assert(std::numeric_limits<unsigned>::digits == 32, "int is not 32-bit");
 
 // 3d vector
 struct vec3

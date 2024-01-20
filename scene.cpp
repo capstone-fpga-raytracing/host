@@ -1,14 +1,13 @@
-// https://en.wikipedia.org/wiki/Wavefront_.obj_file
 
 #include <cassert>
 #include <string>
+#include <string_view>
 #include <iostream>
-#include <fstream>
-#include <sstream>
 #include <charconv>
 
 #include "defs.hpp"
 
+#define ENABLE_TEXTURES 0
 
 static void scerror(int lineno, const char* msg)
 {
@@ -16,23 +15,61 @@ static void scerror(int lineno, const char* msg)
     std::cerr << ": " << msg << "\n";
 }
 
+#define SCBAIL(lineno, msg) \
+    do { \
+        scerror(lineno, msg); \
+        return; \
+    } while (0)
+
+template <typename T>
+inline bool parsenum(std::string_view& str, T& val)
+{
+    const char* beg = str.data();
+    const char* end = str.data() + str.length();
+
+    // skip whitespace
+    while (beg != end && is_ws(*beg)) { beg++; }
+
+    auto res = std::from_chars(beg, end, val);
+    str = { res.ptr, end };
+    return res.ec == std::errc();
+}
+
+template <typename T>
+inline bool parsenum3(std::string_view& str, T& a, T& b, T& c)
+{
+    return parsenum(str, a) && parsenum(str, b) && parsenum(str, c);
+}
+
 SceneData::SceneData(const fs::path& scpath) : m_ok(false), C({0}), R(0, 0)
 {
-    std::ifstream scfile(scpath, std::ios::binary);
-    if (!scfile) {
-        std::cerr << "could not open scene file\n";
-        return;
+    BufWithSize<char> scbuf;
+    {
+        scopedFILE scfile = SAFE_FOPEN(scpath.c_str(), "rb");
+        if (!scfile) {
+            std::cerr << "could not open scene file\n";
+            return;
+        }   
+        scbuf.size = fs::file_size(scpath);
+        scbuf.buf = std::make_unique<char[]>(scbuf.size);
+
+        // this is okay as a .scene file is always small.
+        if (std::fread(scbuf.get(), 1, scbuf.size, scfile.get()) != scbuf.size) {
+            std::cerr << "could not read scene file\n";
+            return;
+        }
     }
 
     auto scdir = scpath.parent_path();
     std::vector<fs::path> objpaths;
 
     int lineno = 0;
-    std::string line;
-    std::istringstream is;
-    while (std::getline(scfile, line))
+    size_t scpos = 0;
+    std::string_view line;
+    std::string_view scstr(scbuf.get(), scbuf.size);
+
+    while (sv_getline(scstr, scpos, line))
     {
-        rtrim(line);
         lineno++;
         if (line.empty()) { continue; }
 
@@ -43,57 +80,55 @@ SceneData::SceneData(const fs::path& scpath) : m_ok(false), C({0}), R(0, 0)
                 has_focus = false, 
                 has_proj_size = false;
 
-            while (std::getline(scfile, line))
+            while (sv_getline(scstr, scpos, line))
             {
-                rtrim(line);
                 lineno++;
                 if (line.empty()) { break; }
-                is.str(line);
 
                 if (line.starts_with("eye "))
                 {
-                    is.ignore(sizeof("eye ") - 1);
-                    vec3& eye = C.eye;
-                    is >> eye.x() >> eye.y() >> eye.z();
+                    line.remove_prefix(sizeof("eye ") - 1);
+                    if (!parsenum3(line, C.eye.x(), C.eye.y(), C.eye.z())) {
+                        SCBAIL(lineno, "invalid eye");
+                    }
                     has_eye = true;
                 }
                 else if (line.starts_with("uvw "))
                 {
-                    is.ignore(sizeof("uvw ") - 1);
+                    line.remove_prefix(sizeof("uvw ") - 1);
+
                     vec3& u = C.u; vec3& v = C.v; vec3& w = C.w;
-                    is >> u.x() >> u.y() >> u.z()
-                        >> v.x() >> v.y() >> v.z()
-                        >> w.x() >> w.y() >> w.z();
+                    if (!parsenum3(line, u.x(), u.y(), u.z()) ||
+                        !parsenum3(line, v.x(), v.y(), v.z()) ||
+                        !parsenum3(line, w.x(), w.y(), w.z())) {
+                        SCBAIL(lineno, "invalid uvw");
+                    }
                     has_uvw = true;
                 }
                 else if (line.starts_with("focal_len "))
                 {
-                    is.ignore(sizeof("focal_len ") - 1);
-                    is >> C.focal_len;
-                    if (C.focal_len <= 0) {
-                        scerror(lineno, "Invalid focal length");
-                        return;
+                    line.remove_prefix(sizeof("focal_len ") - 1);
+                    if (!parsenum(line, C.focal_len) || C.focal_len <= 0) {
+                        SCBAIL(lineno, "invalid focal length");
                     }
                     has_focus = true;
                 }
                 else if (line.starts_with("proj_size "))
                 {
-                    is.ignore(sizeof("proj_size ") - 1);
-                    is >> C.width >> C.height;
-                    if (C.width <= 0 || C.height <= 0) {
-                        scerror(lineno, "Invalid projection size");
-                        return;
+                    line.remove_prefix(sizeof("proj_size ") - 1);
+
+                    if (!parsenum(line, C.width) ||
+                        !parsenum(line, C.height) ||
+                        C.width <= 0 || C.height <= 0) {
+                        SCBAIL(lineno, "invalid projection size");
                     }
                     has_proj_size = true;
                 }
-                else { scerror(lineno, "ignored prop"); }
-
-                is.clear();
+                else { SCBAIL(lineno, "unrecognized prop"); }
             }
-            if (!has_eye || !has_uvw || !has_focus || !has_proj_size)
-            {
-                scerror(lineno, "missing camera prop(s)");
-                return;
+
+            if (!has_eye || !has_uvw || !has_focus || !has_proj_size) {
+                SCBAIL(lineno, "missing camera prop(s)");
             }
         }
         else if (line.starts_with("light"))
@@ -101,36 +136,34 @@ SceneData::SceneData(const fs::path& scpath) : m_ok(false), C({0}), R(0, 0)
             light lt{ 0 };
             bool has_pos = false, has_rgb = false;
 
-            while (std::getline(scfile, line))
+            while (sv_getline(scstr, scpos, line))
             {
-                rtrim(line);
                 lineno++;
                 if (line.empty()) { break; }
-                is.str(line);
 
                 if (line.starts_with("pos "))
                 {
-                    is.ignore(sizeof("pos ") - 1);
-                    is >> lt.pos.x() >> lt.pos.y() >> lt.pos.z();
+                    line.remove_prefix(sizeof("pos ") - 1);
+                    if (!parsenum3(line, lt.pos.x(), lt.pos.y(), lt.pos.z())) {
+                        SCBAIL(lineno, "invalid position");
+                    }
                     has_pos = true;
                 }
                 else if (line.starts_with("rgb "))
                 {
-                    is.ignore(sizeof("rgb ") - 1);
-                    is >> lt.rgb.x() >> lt.rgb.y() >> lt.rgb.z();
-                    if (lt.rgb.x() < 0 || lt.rgb.y() < 0 || lt.rgb.z() < 0) {
-                        scerror(lineno, "Color must be in [0,1]");
-                        return;
+                    line.remove_prefix(sizeof("rgb ") - 1);
+                    
+                    if (!parsenum3(line, lt.rgb.x(), lt.rgb.y(), lt.rgb.z()) ||
+                        lt.rgb.x() < 0 || lt.rgb.y() < 0 || lt.rgb.z() < 0 ||
+                        lt.rgb.x() > 1 || lt.rgb.y() > 1 || lt.rgb.z() > 1) {
+                        SCBAIL(lineno, "invalid color, must be in [0,1]");
                     }
                     has_rgb = true;
                 }
-                else { scerror(lineno, "ignored prop"); }
-
-                is.clear();
+                else { SCBAIL(lineno, "unrecognized prop"); }
             }
             if (!has_pos || !has_rgb) {
-                scerror(lineno, "missing light prop(s)");
-                return;
+                SCBAIL(lineno, "missing light prop(s)");
             }
 
             L.push_back(lt);
@@ -138,41 +171,36 @@ SceneData::SceneData(const fs::path& scpath) : m_ok(false), C({0}), R(0, 0)
         else if (line == "render") 
         {
             bool has_res = false;
-            while (std::getline(scfile, line)) 
+            while (sv_getline(scstr, scpos, line)) 
             {
-                rtrim(line);
                 lineno++;
                 if (line.empty()) { break; }
-                is.str(line);
 
                 if (line.starts_with("res "))
                 {
-                    is.ignore(sizeof("res ") - 1);
-                    is >> R.first >> R.second;
+                    line.remove_prefix(sizeof("res ") - 1);
+                    if (!parsenum(line, R.first) ||
+                        !parsenum(line, R.second)) {
+                        SCBAIL(lineno, "invalid resolution");
+                    }
                     has_res = true;
                 }
-                else { scerror(lineno, "ignored prop"); }
-
-                is.clear();
+                else { SCBAIL(lineno, "unrecognized prop"); }
             }
             if (!has_res) {
-                scerror(lineno, "missing render prop(s)");
-                return;
+                SCBAIL(lineno, "missing render prop(s)");
             }
         }
         else if (line == "obj")
         {
-            while (std::getline(scfile, line)) 
+            while (sv_getline(scstr, scpos, line)) 
             {
-                rtrim(line);
                 lineno++;
                 if (line.empty()) { break; }
-
                 objpaths.push_back(scdir / fs::path(line));
             }
         }
     }
-    scfile.close();
 
     // Parse obj + mtl files
     std::vector<int> missing_matFids;
@@ -290,6 +318,45 @@ SceneData::SceneData(const fs::path& scpath) : m_ok(false), C({0}), R(0, 0)
     m_ok = true;
 }
 
+uint SceneData::nserial() const
+{
+    return Nwordshdr + camera::nserial +
+        nsL() + nsV() + nsNV() + nsF() + nsNF() + nsM() + nsMF();
+}
+
+void SceneData::serialize(uint* p) const
+{ 
+    /* size  */ p[0] = nserial();
+    /* numV  */ p[1] = uint(V.size());
+    /* numF  */ p[2] = uint(F.size());
+    /* numL  */ p[3] = uint(L.size());
+    /* Loff  */ p[4] = Nwordshdr + camera::nserial;
+    /* Voff  */ p[5] = p[4] + nsL();
+    /* NVoff */ p[6] = p[5] + nsV();
+    /* Foff  */ p[7] = p[6] + nsNV();
+    /* NFoff */ p[8] = p[7] + nsF();
+    /* Moff  */ p[9] = p[8] + nsNF();
+    /* MFoff */ p[10] = p[9] + nsM();
+    /* resX  */ p[11] = R.first;
+    /* resY  */ p[12] = R.second;
+    
+    assert(p[10] + nsMF() == nserial() 
+        && "Header size not set correctly");
+    p += Nwordshdr;
+
+    C.serialize(p); 
+    p += camera::nserial;
+    p = vserialize(L, p);
+    p = vserialize(V, p);
+    p = vserialize(NV, p);
+    p = vserialize(F, p);
+    p = vserialize(NF, p);
+    p = vserialize(M, p);
+    p = vserialize(MF, p);
+}
+
+// not used. needs to be updated for scene and mtl files
+#if 0
 bool write_model(const char* obj_file, const char* mtl_file, SceneData& m)
 {
     if (m.UF.size() != m.F.size() ||
@@ -334,43 +401,7 @@ bool write_model(const char* obj_file, const char* mtl_file, SceneData& m)
     file.close();
     return true;
 }
-
-uint SceneData::nserial() const
-{
-    return Nwordshdr + camera::nserial +
-        nsL() + nsV() + nsNV() + nsF() + nsNF() + nsM() + nsMF();
-}
-
-void SceneData::serialize(uint* p) const
-{ 
-    /* size  */ p[0] = nserial();
-    /* numV  */ p[1] = uint(V.size());
-    /* numF  */ p[2] = uint(F.size());
-    /* numL  */ p[3] = uint(L.size());
-    /* Loff  */ p[4] = Nwordshdr + camera::nserial;
-    /* Voff  */ p[5] = p[4] + nsL();
-    /* NVoff */ p[6] = p[5] + nsV();
-    /* Foff  */ p[7] = p[6] + nsNV();
-    /* NFoff */ p[8] = p[7] + nsF();
-    /* Moff  */ p[9] = p[8] + nsNF();
-    /* MFoff */ p[10] = p[9] + nsM();
-    /* resX  */ p[11] = R.first;
-    /* resY  */ p[12] = R.second;
-    
-    assert(p[10] + nsMF() == nserial() 
-        && "Header size not set correctly");
-    p += Nwordshdr;
-
-    C.serialize(p); 
-    p += camera::nserial;
-    p = vserialize(L, p);
-    p = vserialize(V, p);
-    p = vserialize(NV, p);
-    p = vserialize(F, p);
-    p = vserialize(NF, p);
-    p = vserialize(M, p);
-    p = vserialize(MF, p);
-}
+#endif
 
 // old test scene
 // These numbers mostly from blender
