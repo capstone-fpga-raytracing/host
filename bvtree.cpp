@@ -122,7 +122,7 @@ static uint* tree_serialize(BVNode* root, uint* const beg, uint* p)
 }
 
 BVTree::BVTree(const SceneData& m) : 
-    m_ok(false), m_root(nullptr)
+    m_root(nullptr), m_ok(false)
 {
     // triangle nodes.
     // these are the leaves

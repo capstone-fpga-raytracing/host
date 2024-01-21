@@ -41,7 +41,7 @@ static inline bool parsenum3(std::string_view& str, T& a, T& b, T& c)
     return parsenum(str, a) && parsenum(str, b) && parsenum(str, c);
 }
 
-SceneData::SceneData(const fs::path& scpath) : m_ok(false), C({0}), R(0, 0)
+SceneData::SceneData(const fs::path& scpath) : C({0}), R(0, 0), m_ok(false)
 {
     // read entire file into memory.
     // this is okay as a .scene file is always small.
