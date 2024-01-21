@@ -35,16 +35,14 @@ struct BufWithSize
     auto get() { return buf.get(); }
 };
 
-//
 // On Linux, ifstream.read() and fread() are just as fast.
 // On Windows, fread() appears to be faster than ifstream.read()
 // https://gist.github.com/mayawarrier/7ed71f1f91a7f8588b7f8bd96a561892.
 //
-#ifdef _MSC_VER
 #define SAFE_AFOPEN(fname, mode) scopedFILE(std::fopen(fname, mode), std::fclose)
+#ifdef _MSC_VER
 #define SAFE_FOPEN(fname, mode) scopedFILE(::_wfopen(fname, CONCAT(L, mode)), std::fclose)
 #else
-#define SAFE_AFOPEN(fname, mode) scopedFILE(std::fopen(fname, mode), std::fclose)
 #define SAFE_FOPEN(fname, mode) SAFE_AFOPEN(fname, mode)
 #endif
 

@@ -22,7 +22,7 @@ static void scerror(int lineno, const char* msg)
     } while (0)
 
 template <typename T>
-inline bool parsenum(std::string_view& str, T& val)
+static bool parsenum(std::string_view& str, T& val)
 {
     const char* beg = str.data();
     const char* end = str.data() + str.length();
@@ -36,13 +36,15 @@ inline bool parsenum(std::string_view& str, T& val)
 }
 
 template <typename T>
-inline bool parsenum3(std::string_view& str, T& a, T& b, T& c)
+static inline bool parsenum3(std::string_view& str, T& a, T& b, T& c)
 {
     return parsenum(str, a) && parsenum(str, b) && parsenum(str, c);
 }
 
 SceneData::SceneData(const fs::path& scpath) : m_ok(false), C({0}), R(0, 0)
 {
+    // read entire file into memory.
+    // this is okay as a .scene file is always small.
     BufWithSize<char> scbuf;
     {
         scopedFILE scfile = SAFE_FOPEN(scpath.c_str(), "rb");
@@ -53,7 +55,6 @@ SceneData::SceneData(const fs::path& scpath) : m_ok(false), C({0}), R(0, 0)
         scbuf.size = fs::file_size(scpath);
         scbuf.buf = std::make_unique<char[]>(scbuf.size);
 
-        // this is okay as a .scene file is always small.
         if (std::fread(scbuf.get(), 1, scbuf.size, scfile.get()) != scbuf.size) {
             std::cerr << "could not read scene file\n";
             return;
@@ -68,12 +69,45 @@ SceneData::SceneData(const fs::path& scpath) : m_ok(false), C({0}), R(0, 0)
     std::string_view line;
     std::string_view scstr(scbuf.get(), scbuf.size);
 
+    // Parse scene file
     while (sv_getline(scstr, scpos, line))
     {
         lineno++;
         if (line.empty()) { continue; }
 
-        if (line == "camera")
+        if (line == "obj")
+        {
+            while (sv_getline(scstr, scpos, line))
+            {
+                lineno++;
+                if (line.empty()) { break; }
+                objpaths.push_back(scdir / line);
+            }
+        }
+        else if (line == "render")
+        {
+            bool has_res = false;
+            while (sv_getline(scstr, scpos, line))
+            {
+                lineno++;
+                if (line.empty()) { break; }
+
+                if (line.starts_with("res "))
+                {
+                    line.remove_prefix(sizeof("res ") - 1);
+                    if (!parsenum(line, R.first) ||
+                        !parsenum(line, R.second)) {
+                        SCBAIL(lineno, "invalid resolution");
+                    }
+                    has_res = true;
+                }
+                else { SCBAIL(lineno, "unrecognized prop"); }
+            }
+            if (!has_res) {
+                SCBAIL(lineno, "missing render prop(s)");
+            }
+        }
+        else if (line == "camera")
         {
             bool has_eye = false, 
                 has_uvw = false, 
@@ -168,38 +202,7 @@ SceneData::SceneData(const fs::path& scpath) : m_ok(false), C({0}), R(0, 0)
 
             L.push_back(lt);
         }
-        else if (line == "render") 
-        {
-            bool has_res = false;
-            while (sv_getline(scstr, scpos, line)) 
-            {
-                lineno++;
-                if (line.empty()) { break; }
-
-                if (line.starts_with("res "))
-                {
-                    line.remove_prefix(sizeof("res ") - 1);
-                    if (!parsenum(line, R.first) ||
-                        !parsenum(line, R.second)) {
-                        SCBAIL(lineno, "invalid resolution");
-                    }
-                    has_res = true;
-                }
-                else { SCBAIL(lineno, "unrecognized prop"); }
-            }
-            if (!has_res) {
-                SCBAIL(lineno, "missing render prop(s)");
-            }
-        }
-        else if (line == "obj")
-        {
-            while (sv_getline(scstr, scpos, line)) 
-            {
-                lineno++;
-                if (line.empty()) { break; }
-                objpaths.push_back(scdir / fs::path(line));
-            }
-        }
+        else { SCBAIL(lineno, "unrecognized prop"); }
     }
 
     // Parse obj + mtl files
@@ -261,7 +264,7 @@ SceneData::SceneData(const fs::path& scpath) : m_ok(false), C({0}), R(0, 0)
                 shape.points.indices.size() != 0) 
             {
                 std::cerr << objpath;
-                std::cerr << ": polylines/points not supported";
+                std::cerr << ": polylines/points not supported\n";
                 return;
             }
 
@@ -302,6 +305,10 @@ SceneData::SceneData(const fs::path& scpath) : m_ok(false), C({0}), R(0, 0)
                 else { MF.push_back(baseMidx + matids[i]); }
             }
         }
+    }
+    if (F.empty() || V.empty()) {
+        std::cerr << "No faces or vertices found in " << scpath << "\n";
+        return;
     }
 
     // assign default to faces with no material

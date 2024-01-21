@@ -140,11 +140,11 @@ struct mat
         // these numbers from Blender.
         // (gray plastic)
         mat m;
-        m.ka = { 1.f, 1.f, 1.f };
-        m.kd = { 0.8f, 0.8f, 0.8f };
-        m.ks = { 0.5f, 0.5f, 0.5f };
-        m.km = { 0.05f, 0.05f, 0.05f };
-        m.ns = 250.f;
+        m.ka = { 1, 1, 1 };
+        m.kd = { 0.8, 0.8, 0.8 };
+        m.ks = { 0.5, 0.5, 0.5 };
+        m.km = { 0.05, 0.05, 0.05 };
+        m.ns = 250;
         return m;
     }
 
@@ -308,7 +308,11 @@ struct BVNode
     BVNode* right;
 };
 
-// Bounding-volume tree (axis-aligned)
+// Bounding-volume tree (axis-aligned).
+// 
+// The root node always exists (even if num tris are 0).
+// If the scene has only 1 triangle, it is encoded as
+// a root node with one child triangle.
 struct BVTree
 {
     BVTree(const SceneData& model);

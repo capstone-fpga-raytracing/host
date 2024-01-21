@@ -3,7 +3,7 @@
 #include <ranges>
 #include "defs.hpp"
 
-using BVNodesConstItr = std::vector<BVNode*>::const_iterator;
+using BVNodesItr = std::vector<BVNode*>::iterator;
 
 static inline BBox get_tri_bbox(const std::vector<vec3>& V, const std::array<int, 3>& tri)
 {
@@ -16,7 +16,7 @@ static inline BBox get_tri_bbox(const std::vector<vec3>& V, const std::array<int
     return bb;
 }
 
-static inline BBox get_nodes_bbox(BVNodesConstItr begin, BVNodesConstItr end)
+static inline BBox get_nodes_bbox(BVNodesItr begin, BVNodesItr end)
 {
     BBox bb;
     for (auto it = begin; it != end; ++it)
@@ -28,9 +28,9 @@ static inline BBox get_nodes_bbox(BVNodesConstItr begin, BVNodesConstItr end)
     return bb;
 }
 
-static BVNode* tree_create(BVNodesConstItr tris_beg, BVNodesConstItr tris_end);
+static BVNode* tree_create(BVNodesItr tris_beg, BVNodesItr tris_end);
 
-static BVNode* get_subtree(BVNodesConstItr tris_beg, BVNodesConstItr tris_end)
+static BVNode* get_subtree(BVNodesItr tris_beg, BVNodesItr tris_end)
 {
     switch (std::distance(tris_beg, tris_end))
     {
@@ -40,7 +40,8 @@ static BVNode* get_subtree(BVNodesConstItr tris_beg, BVNodesConstItr tris_end)
     }
 }
 
-static BVNode* tree_create(BVNodesConstItr tris_beg, BVNodesConstItr tris_end)
+// tris vector will be sorted in the same order as the leaves of the tree
+static BVNode* tree_create(BVNodesItr tris_beg, BVNodesItr tris_end)
 {
     BVNode* root = new BVNode();
 
@@ -51,24 +52,23 @@ static BVNode* tree_create(BVNodesConstItr tris_beg, BVNodesConstItr tris_end)
     
     const int maxDim = (root->bbox.cmax - root->bbox.cmin).maxDim();
     // sort by longest dimension
-    std::vector<BVNode*> sortedtris(tris_beg, tris_end);
-    ranges::sort(sortedtris, [=](BVNode* lhs, BVNode* rhs) {
+    std::sort(tris_beg, tris_end, [=](BVNode* lhs, BVNode* rhs) {
         return lhs->bbox.center()[maxDim] < rhs->bbox.center()[maxDim]; });
 
     // divide equally into 2 subtrees
-    size_t lhs_size = sortedtris.size() / 2;
-    root->left = get_subtree(sortedtris.begin(), sortedtris.begin() + lhs_size);
-    root->right = get_subtree(sortedtris.begin() + lhs_size, sortedtris.end());
+    int lhs_size = root->nleaves / 2;
+    root->left = get_subtree(tris_beg, tris_beg + lhs_size);
+    root->right = get_subtree(tris_beg + lhs_size, tris_end);
 
-    if (root->left) root->ndesc += root->left->ndesc + 1;
-    if (root->right) root->ndesc += root->right->ndesc + 1;
+    if (root->left) { root->ndesc += (root->left->ndesc + 1); }
+    if (root->right) { root->ndesc += (root->right->ndesc + 1); }
 
     return root;
 }
 
 static void tree_delete(BVNode* root)
 {
-    if (!root) return;
+    if (!root) { return; }
 
     tree_delete(root->left);
     tree_delete(root->right);
@@ -90,7 +90,7 @@ static uint tree_nserial(BVNode* root)
 
 static uint* tree_serialize(BVNode* root, uint* const beg, uint* p)
 {
-    if (!root) return p;
+    if (!root) { return p; }
 
     // bbox, tri
     root->bbox.serialize(p);
@@ -121,7 +121,8 @@ static uint* tree_serialize(BVNode* root, uint* const beg, uint* p)
     return p;
 }
 
-BVTree::BVTree(const SceneData& m) : m_ok(false)
+BVTree::BVTree(const SceneData& m) : 
+    m_ok(false), m_root(nullptr)
 {
     // triangle nodes.
     // these are the leaves
@@ -152,6 +153,6 @@ void BVTree::serialize(uint* buf) const
 {
     auto* res = tree_serialize(m_root, buf, buf);
     // sanity check
-    assert(uint(res - buf) == nserial()); 
+    assert(nserial() != 0 && uint(res - buf) == nserial()); 
     (void)res;
 }

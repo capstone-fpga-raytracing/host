@@ -2,5 +2,6 @@
 .vscode/
 out/
 build/
+profile/
 # no eigen for now
 eigen-3.4.0
