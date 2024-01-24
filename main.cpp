@@ -5,7 +5,7 @@
 #include <memory>
 #include <charconv>
 
-#include "cxxopts/cxxopts.hpp"
+#include "cxxopts.hpp"
 #include "defs.hpp"
 
 #include "io.h"
@@ -169,7 +169,7 @@ int main(int argc, char** argv)
         const char* port = fpga_args[1].c_str();
 
         std::cout << "Sending " << inpath.filename() << " to FPGA...\n";
-        if (TCP_send((byte*)Sbuf.get(), uint(Sbuf.size * 4), "scene", addr, port) != 0) {
+        if (TCP_send((byte*)Sbuf.get(), uint(Sbuf.size * 4), "scene.bin", addr, port) != 0) {
             BAIL("failed to send scene");
         }
 
@@ -181,7 +181,7 @@ int main(int argc, char** argv)
         auto data_s = scoped_mallocptr<byte[]>(data);
         auto name_s = scoped_mallocptr<char[]>(name);
 
-        if (nrecv < 0 || std::strcmp(name, "scene") != 0) {
+        if (nrecv < 0 || std::strcmp(name, "scene.bin") != 0) {
             BAIL("failed to receive image");
         }
 
