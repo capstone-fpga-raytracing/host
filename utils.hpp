@@ -70,16 +70,16 @@ inline bool sv_getline(std::string_view str, size_t& pos, std::string_view& line
     return true;
 }
 
-inline uint to_fixedpt(double val)
+inline uint to_fixedpt(float val)
 {
     return uint(std::lround(val * (1 << 16)));
 }
 
-inline double from_fixedpt(uint val)
+inline float from_fixedpt(uint val)
 {
     // int(val) interprets the bits of val as a signed number, 
     // which only works from c++20 onwards
-    return double(int(val)) / (1 << 16);
+    return float(int(val)) / (1 << 16);
 }
 
 inline uint bswap(uint v)

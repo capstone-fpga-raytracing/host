@@ -19,7 +19,7 @@ struct vec3
 {
     vec3() = default;
 
-    constexpr vec3(double x, double y, double z)
+    constexpr vec3(float x, float y, float z)
     {
         v[0] = x;
         v[1] = y;
@@ -34,22 +34,22 @@ struct vec3
         v[2] = a[2];
     }
 
-    constexpr vec3(double val) : 
+    constexpr vec3(float val) : 
         vec3(val, val, val) 
     {}
 
-    double& x() { return v[0]; }
-    double& y() { return v[1]; }
-    double& z() { return v[2]; }
+    float& x() { return v[0]; }
+    float& y() { return v[1]; }
+    float& z() { return v[2]; }
 
-    double x() const { return v[0]; }
-    double y() const { return v[1]; }
-    double z() const { return v[2]; }
+    float x() const { return v[0]; }
+    float y() const { return v[1]; }
+    float z() const { return v[2]; }
 
-    double& operator[](int pos) { return v[pos]; }
-    const double& operator[](int pos) const { return v[pos]; }
+    float& operator[](int pos) { return v[pos]; }
+    const float& operator[](int pos) const { return v[pos]; }
 
-    double dot(vec3 rhs) const 
+    float dot(vec3 rhs) const 
     {
         return x() * rhs.x() + y() * rhs.y() + z() * rhs.z();
     }
@@ -62,20 +62,20 @@ struct vec3
             x() * rhs.y() - y() * rhs.x() };
     }
 
-    double norm() const 
+    float norm() const 
     {
         return std::sqrt(x() * x() + y() * y() + z() * z());
     }
 
     void normalize()
     {
-        double n = norm();
+        float n = norm();
         x() /= n; y() /= n; z() /= n;
     }
 
     vec3 normalized() const
     {
-        double n = norm();
+        float n = norm();
         return { x() / n, y() / n, z() / n };
     }
 
@@ -107,7 +107,7 @@ struct vec3
     }
 
 private:
-    double v[3];
+    float v[3];
 };
 
 inline vec3 operator+(const vec3& lhs, const vec3& rhs) noexcept
@@ -118,11 +118,11 @@ inline vec3 operator-(const vec3& lhs, const vec3& rhs) noexcept
 {
     return { lhs[0] - rhs[0], lhs[1] - rhs[1], lhs[2] - rhs[2] };
 }
-inline vec3 operator*(double sc, const vec3& rhs) noexcept
+inline vec3 operator*(float sc, const vec3& rhs) noexcept
 {
     return { sc * rhs[0], sc * rhs[1], sc * rhs[2] };
 }
-inline vec3 operator*(const vec3& rhs, double sc) noexcept { return operator*(sc, rhs); }
+inline vec3 operator*(const vec3& rhs, float sc) noexcept { return operator*(sc, rhs); }
 
 
 // Material
@@ -132,7 +132,7 @@ struct mat
     // range: [0, 1]
     vec3 ka, kd, ks, km;
     // specular (phong) exponent
-    double ns;
+    float ns;
 
     // Default for faces without material.
     static constexpr mat default_mat()
@@ -140,10 +140,10 @@ struct mat
         // these numbers from Blender.
         // (gray plastic)
         mat m;
-        m.ka = { 1, 1, 1 };
-        m.kd = { 0.8, 0.8, 0.8 };
-        m.ks = { 0.5, 0.5, 0.5 };
-        m.km = { 0.05, 0.05, 0.05 };
+        m.ka = { 1.f, 1.f, 1.f };
+        m.kd = { 0.8f, 0.8f, 0.8f };
+        m.ks = { 0.5f, 0.5f, 0.5f };
+        m.km = { 0.05f, 0.05f, 0.05f };
         m.ns = 250;
         return m;
     }
@@ -162,7 +162,7 @@ struct mat
 };
 
 // Texture coordinate
-struct uv { double u, v; };
+struct uv { float u, v; };
 
 struct light
 {
@@ -182,8 +182,8 @@ struct camera
 {
     vec3 eye; // position
     vec3 u, v, w; // rotation axes (-w is viewing direction)
-    double focal_len; // focal length (distance to img plane)
-    double width, height; // projected img size (in world space)
+    float focal_len; // focal length (distance to img plane)
+    float width, height; // projected img size (in world space)
 
     static constexpr uint nserial = 4 * vec3::nserial + 3;
 
@@ -281,8 +281,8 @@ struct BBox
     vec3 cmax; // Max corner
 
     BBox() :
-        cmin(std::numeric_limits<double>::infinity()),
-        cmax(-std::numeric_limits<double>::infinity())
+        cmin(std::numeric_limits<float>::infinity()),
+        cmax(-std::numeric_limits<float>::infinity())
     {}
 
     vec3 center() const { return 0.5 * (cmin + cmax); }

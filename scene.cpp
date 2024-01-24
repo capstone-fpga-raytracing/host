@@ -251,8 +251,8 @@ SceneData::SceneData(const fs::path& scpath) : C({0}), R(0, 0), m_ok(false)
             // 1000-2000x+1000x^{2} = ns, then refl=1-roughness (stupid but should work).
             // this is the what blender appears to use
             assert(m.ns >= 0);
-            double ref_ns = m.ns > 1000 ? 1 : m.ns / 1000;
-            double refl = std::sqrt(4 * ref_ns) / 2;
+            float ref_ns = m.ns > 1000 ? 1 : m.ns / 1000;
+            float refl = std::sqrt(4 * ref_ns) / 2;
             m.km = { refl, refl, refl };
 
             M.push_back(m);
