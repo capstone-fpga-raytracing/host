@@ -23,7 +23,7 @@ static void print_duration(OStream& os, T time)
 
 #define BAIL(msg) \
     do { \
-        std::cerr << msg << "\n"; \
+        std::cerr << "error: " << msg << "\n"; \
         return EXIT_FAILURE; \
     } while (0)
 
@@ -96,11 +96,11 @@ int main(int argc, char** argv)
             BAIL("scene is already in binary format");
         }
 
-        Sbuf.size = fs::file_size(inpath) / 4;
-        Sbuf.buf = std::make_unique<uint[]>(Sbuf.size);
-
         scopedFILE f = SAFE_FOPEN(inpath.c_str(), "rb");
         if (!f) { BAIL("could not open input file"); }
+
+        Sbuf.size = fs::file_size(inpath) / 4;
+        Sbuf.buf = std::make_unique<uint[]>(Sbuf.size);
 
         if (std::fread(Sbuf.get(), 4, Sbuf.size, f.get()) != Sbuf.size) {
             BAIL("could not read input file");
@@ -167,9 +167,10 @@ int main(int argc, char** argv)
 
         const char* addr = fpga_args[0].c_str();
         const char* port = fpga_args[1].c_str();
+        const uint nbytes = uint(Sbuf.size * 4);
 
         std::cout << "Sending " << inpath.filename() << " to FPGA...\n";
-        if (TCP_send((byte*)Sbuf.get(), uint(Sbuf.size * 4), "scene.bin", addr, port) != 0) {
+        if (TCP_send((byte*)Sbuf.get(), nbytes, "scene", addr, port) != nbytes) {
             BAIL("failed to send scene");
         }
 
@@ -181,9 +182,10 @@ int main(int argc, char** argv)
         auto data_s = scoped_mallocptr<byte[]>(data);
         auto name_s = scoped_mallocptr<char[]>(name);
 
-        if (nrecv < 0 || std::strcmp(name, "scene.bin") != 0) {
+        if (nrecv < 0) {
             BAIL("failed to receive image");
-        }
+        }     
+        std::cout << "Received image " << name << "\n";
 
         auto outpath = inpath.replace_extension(".bmp").generic_string();
         if (!write_bmp(outpath.c_str(), data, res.first, res.second, 3)) {
