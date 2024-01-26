@@ -6,6 +6,7 @@ Responsible for:
 - Serializing the scene into a compact binary format
 - Transmitting the scene to FPGA, receiving and saving returned image
 
+Clone with `git clone --recursive https://github.com/capstone-team-2023844-fpga-raytracing/host`, then follow instructions below.
 
 ## Windows
 Install Visual Studio Community 2022 with the following options:
@@ -29,7 +30,7 @@ To compile in Release or Debug, run ``cmake -DCMAKE_BUILD_TYPE=Release ..`` or `
 Once built, you can run `./host --help` to get a list of command line options.
 
 ## Profiling
-On Windows, you can use Visual Studio's superb Performance Profiler. 
+On Windows, you can use Visual Studio's Performance Profiler. 
 
 On Linux:
 - Install valgrind and kcachegrind.
