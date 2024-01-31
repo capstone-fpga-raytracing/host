@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.14)
 project(capstone_host)
 
-add_executable(host "main.cpp" "scene.cpp" "defs.hpp" "utils.hpp" "bvtree.cpp")
+add_executable(host "main.cpp" "scene.cpp" "defs.hpp" "utils.hpp")
 add_subdirectory(ext/IO)
 
 include(FetchContent)

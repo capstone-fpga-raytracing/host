@@ -7,19 +7,77 @@
 
 #include "defs.hpp"
 
-#define ENABLE_TEXTURES 0
 
-static void scerror(int lineno, const char* msg)
+static inline bbox get_tri_bbox(
+    const std::vector<vec3>& V, const std::array<int, 3>& tri)
 {
-    std::cerr << "line " << lineno;
-    std::cerr << ": " << msg << "\n";
+    bbox bb;
+    for (int i = 0; i < 3; ++i)
+    {
+        bb.cmin = bb.cmin.cwiseMin(V[tri[i]]);
+        bb.cmax = bb.cmax.cwiseMax(V[tri[i]]);
+    }
+    return bb;
 }
 
-#define SCBAIL(lineno, msg) \
+static inline bbox get_nodes_bbox(
+    const tri* tris_beg, const tri* tris_end)
+{
+    bbox bb;
+    for (auto* p = tris_beg; p < tris_end; ++p)
+    {
+        bb.cmin = bb.cmin.cwiseMin(p->bb.cmin);
+        bb.cmax = bb.cmax.cwiseMax(p->bb.cmax);
+    }
+    return bb;
+}
+
+// Gather bboxes at stop_depth, and sort triangles in order of bboxes.
+void Scene::gather_bvs(tri* tris_beg, tri* tris_end, uint depth)
+{
+    bbox bb = get_nodes_bbox(tris_beg, tris_end);
+
+    const int max_dim = (bb.cmax - bb.cmin).maxDim();
+    // sort along longest dimension
+    std::sort(tris_beg, tris_end, [=](const auto& lhs, const auto& rhs) {
+        return lhs.bb.center()[max_dim] < rhs.bb.center()[max_dim]; });
+
+    auto ntris = tris_end - tris_beg;
+    if (depth != bv_stop_depth)
+    {
+        auto lhs_size = ntris / 2;
+        assert(lhs_size != 0 && "should not be possible");
+
+        gather_bvs(tris_beg, tris_beg + lhs_size, depth + 1);
+        gather_bvs(tris_beg + lhs_size, tris_end, depth + 1);
+    }
+    else { BV.emplace_back(std::move(bb), uint(ntris)); }
+}
+
+int Scene::init_bvs(const uint max_bv)
+{
+    if (!is_powof2(max_bv)) {
+        ERROR("max-bv is not a power of 2");
+    }
+
+    bv_stop_depth = ulog2(max_bv);
+    uint last_full_depth = ulog2(std::bit_floor(F.size()));
+
+    if (bv_stop_depth >= last_full_depth && bv_stop_depth != 0) {
+        bv_stop_depth = last_full_depth - 1;
+    }
+
+    gather_bvs(F.data(), F.data() + F.size());
+    return 0;
+}
+
+
+#define SCERROR(lineno, msg) \
     do { \
-        scerror(lineno, msg); \
-        return; \
+        std::cerr << "line " << lineno << ": " << msg << "\n"; \
+        return -1; \
     } while (0)
+
 
 template <typename T>
 static bool parsenum(std::string_view& str, T& val)
@@ -41,23 +99,23 @@ static inline bool parsenum3(std::string_view& str, T& a, T& b, T& c)
     return parsenum(str, a) && parsenum(str, b) && parsenum(str, c);
 }
 
-SceneData::SceneData(const fs::path& scpath) : C({0}), R(0, 0), m_ok(false)
+int Scene::init_scene(const fs::path& scpath, const uint max_bv)
 {
-    // read entire file into memory.
-    // this is okay as a .scene file is always small.
+    // --------------- Parse scene file ---------------
+
     BufWithSize<char> scbuf;
     {
         scopedFILE scfile = SAFE_FOPEN(scpath.c_str(), "rb");
         if (!scfile) {
-            std::cerr << "could not open scene file\n";
-            return;
+            ERROR("could not open scene file");
         }   
         scbuf.size = fs::file_size(scpath);
-        scbuf.buf = std::make_unique<char[]>(scbuf.size);
+        scbuf.ptr = std::make_unique<char[]>(scbuf.size);
 
+        // read the whole file. this is okay as a .scene file is always small
+        // and we always need to parse all of it
         if (std::fread(scbuf.get(), 1, scbuf.size, scfile.get()) != scbuf.size) {
-            std::cerr << "could not read scene file\n";
-            return;
+            ERROR("could not read scene file");
         }
     }
 
@@ -69,7 +127,6 @@ SceneData::SceneData(const fs::path& scpath) : C({0}), R(0, 0), m_ok(false)
     std::string_view line;
     std::string_view scstr(scbuf.get(), scbuf.size);
 
-    // Parse scene file
     while (sv_getline(scstr, scpos, line))
     {
         lineno++;
@@ -97,14 +154,14 @@ SceneData::SceneData(const fs::path& scpath) : C({0}), R(0, 0), m_ok(false)
                     line.remove_prefix(sizeof("res ") - 1);
                     if (!parsenum(line, R.first) ||
                         !parsenum(line, R.second)) {
-                        SCBAIL(lineno, "invalid resolution");
+                        SCERROR(lineno, "invalid resolution");
                     }
                     has_res = true;
                 }
-                else { SCBAIL(lineno, "unrecognized prop"); }
+                else { SCERROR(lineno, "unrecognized prop"); }
             }
             if (!has_res) {
-                SCBAIL(lineno, "missing render prop(s)");
+                SCERROR(lineno, "missing render prop(s)");
             }
         }
         else if (line == "camera")
@@ -123,7 +180,7 @@ SceneData::SceneData(const fs::path& scpath) : C({0}), R(0, 0), m_ok(false)
                 {
                     line.remove_prefix(sizeof("eye ") - 1);
                     if (!parsenum3(line, C.eye.x(), C.eye.y(), C.eye.z())) {
-                        SCBAIL(lineno, "invalid eye");
+                        SCERROR(lineno, "invalid eye");
                     }
                     has_eye = true;
                 }
@@ -135,7 +192,7 @@ SceneData::SceneData(const fs::path& scpath) : C({0}), R(0, 0), m_ok(false)
                     if (!parsenum3(line, u.x(), u.y(), u.z()) ||
                         !parsenum3(line, v.x(), v.y(), v.z()) ||
                         !parsenum3(line, w.x(), w.y(), w.z())) {
-                        SCBAIL(lineno, "invalid uvw");
+                        SCERROR(lineno, "invalid uvw");
                     }
                     has_uvw = true;
                 }
@@ -143,7 +200,7 @@ SceneData::SceneData(const fs::path& scpath) : C({0}), R(0, 0), m_ok(false)
                 {
                     line.remove_prefix(sizeof("focal_len ") - 1);
                     if (!parsenum(line, C.focal_len) || C.focal_len <= 0) {
-                        SCBAIL(lineno, "invalid focal length");
+                        SCERROR(lineno, "invalid focal length");
                     }
                     has_focus = true;
                 }
@@ -154,15 +211,15 @@ SceneData::SceneData(const fs::path& scpath) : C({0}), R(0, 0), m_ok(false)
                     if (!parsenum(line, C.width) ||
                         !parsenum(line, C.height) ||
                         C.width <= 0 || C.height <= 0) {
-                        SCBAIL(lineno, "invalid projection size");
+                        SCERROR(lineno, "invalid projection size");
                     }
                     has_proj_size = true;
                 }
-                else { SCBAIL(lineno, "unrecognized prop"); }
+                else { SCERROR(lineno, "unrecognized prop"); }
             }
 
             if (!has_eye || !has_uvw || !has_focus || !has_proj_size) {
-                SCBAIL(lineno, "missing camera prop(s)");
+                SCERROR(lineno, "missing camera prop(s)");
             }
         }
         else if (line.starts_with("light"))
@@ -179,7 +236,7 @@ SceneData::SceneData(const fs::path& scpath) : C({0}), R(0, 0), m_ok(false)
                 {
                     line.remove_prefix(sizeof("pos ") - 1);
                     if (!parsenum3(line, lt.pos.x(), lt.pos.y(), lt.pos.z())) {
-                        SCBAIL(lineno, "invalid position");
+                        SCERROR(lineno, "invalid position");
                     }
                     has_pos = true;
                 }
@@ -190,23 +247,29 @@ SceneData::SceneData(const fs::path& scpath) : C({0}), R(0, 0), m_ok(false)
                     if (!parsenum3(line, lt.rgb.x(), lt.rgb.y(), lt.rgb.z()) ||
                         lt.rgb.x() < 0 || lt.rgb.y() < 0 || lt.rgb.z() < 0 ||
                         lt.rgb.x() > 1 || lt.rgb.y() > 1 || lt.rgb.z() > 1) {
-                        SCBAIL(lineno, "invalid color, must be in [0,1]");
+                        SCERROR(lineno, "invalid color, must be in [0,1]");
                     }
                     has_rgb = true;
                 }
-                else { SCBAIL(lineno, "unrecognized prop"); }
+                else { SCERROR(lineno, "unrecognized prop"); }
             }
             if (!has_pos || !has_rgb) {
-                SCBAIL(lineno, "missing light prop(s)");
+                SCERROR(lineno, "missing light prop(s)");
             }
 
             L.push_back(lt);
         }
-        else { SCBAIL(lineno, "unrecognized prop"); }
+        else { SCERROR(lineno, "unrecognized prop"); }
     }
 
-    // Parse obj + mtl files
-    std::vector<int> missing_matFids;
+    // --------------- Parse obj + mtl files ---------------
+
+    bool any_missing_mat = false;
+#if ENABLE_TEXTURES
+    bool any_missing_uv = false;
+#endif
+    std::vector<int> badFidx; // faces that need fixing later
+
     for (const auto& objpath : objpaths)
     {
         rapidobj::Result res = rapidobj::ParseFile(objpath);
@@ -214,7 +277,7 @@ SceneData::SceneData(const fs::path& scpath) : C({0}), R(0, 0), m_ok(false)
         {
             std::cerr << objpath << ", line " << res.error.line_num;
             std::cerr << ": " << res.error.code.message() << "\n";
-            return;
+            return -1;
         }
         
         int baseVidx = int(V.size());
@@ -223,6 +286,11 @@ SceneData::SceneData(const fs::path& scpath) : C({0}), R(0, 0), m_ok(false)
             V.push_back({ objverts[i], objverts[i + 1], objverts[i + 2] });
         }
 
+        int baseNVidx = int(NV.size());
+        auto& objnormals = res.attributes.normals;
+        for (size_t i = 0; i < objnormals.size(); i += 3) {
+            NV.push_back({ objnormals[i], objnormals[i + 1], objnormals[i + 2] });
+        }
 #if ENABLE_TEXTURES
         int baseUVidx = int(UV.size());
         auto& objUV = res.attributes.texcoords;
@@ -230,13 +298,7 @@ SceneData::SceneData(const fs::path& scpath) : C({0}), R(0, 0), m_ok(false)
             UV.push_back({ objUV[i], objUV[i + 1] });
         }
 #endif
-        int baseNVidx = int(NV.size());
-        auto& objnormals = res.attributes.normals;
-        for (size_t i = 0; i < objnormals.size(); i += 3) {
-            NV.push_back({ objnormals[i], objnormals[i + 1], objnormals[i + 2] });
-        }
-
-        int baseMidx = int(M.size());
+        int baseMid = int(M.size());
         auto& objmats = res.materials;
         for (size_t i = 0; i < objmats.size(); ++i)
         {
@@ -247,12 +309,13 @@ SceneData::SceneData(const fs::path& scpath) : C({0}), R(0, 0), m_ok(false)
             m.ks = mobj.specular;
             m.ns = mobj.shininess;
 
-            // approximate roughness from phong exponent by solving
-            // 1000-2000x+1000x^{2} = ns, then refl=1-roughness (stupid but should work).
-            // this is the what blender appears to use
+            // get roughness from shininess by solving
+            // 1000-2000r+1000r^{2} = ns, this is what blender appears to use.
+            // then approximate refl as 1-r (stupid but should work).
+            // this simplifies to sqrt(ns/1000)
             assert(m.ns >= 0);
             float ref_ns = m.ns > 1000 ? 1 : m.ns / 1000;
-            float refl = std::sqrt(4 * ref_ns) / 2;
+            float refl = std::sqrt(ref_ns);
             m.km = { refl, refl, refl };
 
             M.push_back(m);
@@ -265,73 +328,145 @@ SceneData::SceneData(const fs::path& scpath) : C({0}), R(0, 0), m_ok(false)
             {
                 std::cerr << objpath;
                 std::cerr << ": polylines/points not supported\n";
-                return;
+                return -1;
             }
 
             auto& meshidx = shape.mesh.indices;
             auto& matids = shape.mesh.material_ids;
-            // sanity check
             assert(meshidx.size() / 3 == matids.size());
 
             for (size_t i = 0; i < meshidx.size(); i += 3)
             {
-                F.push_back({
+                tri t;
+                bool bad = false;
+
+                t.Vidx = {
                     baseVidx + meshidx[i].position_index,
                     baseVidx + meshidx[i + 1].position_index,
-                    baseVidx + meshidx[i + 2].position_index });
+                    baseVidx + meshidx[i + 2].position_index };
+
+                if (meshidx[i].normal_index != -1 &&
+                    meshidx[i + 1].normal_index != -1 &&
+                    meshidx[i + 2].normal_index != -1) [[likely]] 
+                {
+                    t.NVidx = {
+                        baseNVidx + meshidx[i].normal_index,
+                        baseNVidx + meshidx[i + 1].normal_index,
+                        baseNVidx + meshidx[i + 2].normal_index
+                    };
+                }
+                else { t.NVidx[0] = -1; bad = true; }
 
 #if ENABLE_TEXTURES
-                std::array<int, 3> ufidx;
-                for (int j = 0; j < 3; ++j) {
-                    int idx = meshidx[i + j].texcoord_index;
-                    ufidx[j] = idx == -1 ? -1 : baseUVidx + idx;
+                if (meshidx[i].texcoord_index != -1 &&
+                    meshidx[i + 1].texcoord_index != -1 &&
+                    meshidx[i + 2].texcoord_index != -1) [[likely]]
+                {
+                    t.UVidx = {
+                        baseUVidx + meshidx[i].texcoord_index,
+                        baseUVidx + meshidx[i + 1].texcoord_index,
+                        baseUVidx + meshidx[i + 2].texcoord_index
+                    };
                 }
-                UF.push_back(ufidx);
+                else { 
+                    t.UVidx[0] = -1; 
+                    bad = true; 
+                    any_missing_uv = true; 
+                }
 #endif
-                std::array<int, 3> nfidx;
-                for (int j = 0; j < 3; ++j) {
-                    int idx = meshidx[i + j].normal_index;
-                    nfidx[j] = idx == -1 ? -1 : baseNVidx + idx;
+                if (matids[i / 3] != -1) [[likely]] {
+                    t.matid = baseMid + matids[i / 3];
                 }
-                NF.push_back(nfidx);
-            }
+                else { 
+                    t.matid = -1;
+                    bad = true; 
+                    any_missing_mat = true; 
+                }
 
-            for (size_t i = 0; i < matids.size(); ++i)
-            {
-                if (matids[i] < 0) [[unlikely]] {                  
-                    MF.push_back(-1);
-                    missing_matFids.push_back(int(MF.size() - 1));
+                t.bb = get_tri_bbox(V, t.Vidx);
+
+                F.push_back(std::move(t));
+
+                if (bad) [[unlikely]] {
+                    badFidx.push_back(int(F.size() - 1));
                 }
-                else { MF.push_back(baseMidx + matids[i]); }
             }
         }
     }
     if (F.empty() || V.empty()) {
-        std::cerr << "No faces or vertices found in " << scpath << "\n";
-        return;
+        std::cerr << scpath << ": no faces or vertices found\n";
+        return -1;
     }
 
-    // assign default to faces with no material
-    if (missing_matFids.size() != 0) 
+    // --------------- Fix bad faces ---------------
+    
+    if (badFidx.size() != 0)
     {
-        M.push_back(mat::default_mat());
+        int default_matid = -1;
+        if (any_missing_mat) {
+            M.push_back(mat::default_mat());
+            default_matid = int(M.size() - 1);
+        }
+#if ENABLE_TEXTURES
+        int default_uvid = -1;
+        if (any_missing_uv) {
+            UV.push_back({ 0 });
+            default_uvid = int(UV.size() - 1);
+        }
+#endif
+        for (size_t i = 0; i < badFidx.size(); ++i)
+        {
+            auto& t = F[badFidx[i]];
 
-        int default_matid = int(M.size() - 1);
-        for (size_t i = 0; i < missing_matFids.size(); ++i) {
-            MF[missing_matFids[i]] = default_matid;
+            // missing material
+            if (t.matid < 0)
+            {
+                assert(default_matid >= 0);
+                t.matid = default_matid;
+            }
+#if ENABLE_TEXTURES
+            // missing UV
+            if (t.UVidx[0] < 0)
+            {
+                assert(default_uvid >= 0);
+                t.UVidx = { default_uvid,
+                    default_uvid, default_uvid };
+            }
+#endif
+            // missing normals
+            if (t.NVidx[0] < 0)
+            {
+                // do the simple thing (flat shading).
+                // ideally this would use smoothing groups or do some
+                // kind of automatic smoothing, but I dont have time :')
+                vec3 e0 = V[t.Vidx[1]] - V[t.Vidx[0]];
+                vec3 e1 = V[t.Vidx[2]] - V[t.Vidx[0]];
+                vec3 nv = e0.cross(e1).normalized();
+                NV.push_back(nv);
+
+                int nvid = int(NV.size() - 1);
+                t.NVidx = { nvid, nvid, nvid };
+            }
         }
     }
 
-    m_ok = true;
+    return init_bvs(max_bv);
 }
 
-uint SceneData::nserial() const
+Scene::Scene(const fs::path& scpath, const uint max_bv) :
+    C({ 0 }), R(0, 0), m_ok(false)
+{
+    int e = init_scene(scpath, max_bv);
+    m_ok = (e == 0);
+}
+
+uint Scene::nserial() const
 {
     return Nwordshdr + camera::nserial +
         nsL() + nsV() + nsNV() + nsF() + nsNF() + nsM() + nsMF();
 }
 
-void SceneData::serialize(uint* p) const
+void Scene::serialize(uint* p) const
 { 
     /* size  */ p[0] = nserial();
     /* numV  */ p[1] = uint(V.size());
@@ -364,7 +499,7 @@ void SceneData::serialize(uint* p) const
 
 // not used. needs to be updated for scene and mtl files
 #if 0
-bool write_model(const char* obj_file, const char* mtl_file, SceneData& m)
+bool write_model(const char* obj_file, const char* mtl_file, Scene& m)
 {
     if (m.UF.size() != m.F.size() ||
         m.NF.size() != m.F.size())

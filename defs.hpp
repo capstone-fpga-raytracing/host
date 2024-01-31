@@ -12,6 +12,14 @@
 #include "rapidobj/rapidobj.hpp"
 #include "utils.hpp"
 
+#define ENABLE_TEXTURES 0
+
+#define ERROR(msg) \
+    do { \
+        std::cerr << "Error: " << msg << "\n"; \
+        return -1; \
+    } while (0)
+
 static_assert(std::numeric_limits<unsigned>::digits == 32, "int is not 32-bit");
 
 // 3d vector
@@ -49,12 +57,12 @@ struct vec3
     float& operator[](int pos) { return v[pos]; }
     const float& operator[](int pos) const { return v[pos]; }
 
-    float dot(vec3 rhs) const 
+    float dot(const vec3& rhs) const 
     {
         return x() * rhs.x() + y() * rhs.y() + z() * rhs.z();
     }
 
-    vec3 cross(vec3 rhs) const
+    vec3 cross(const vec3& rhs) const
     {
         return {
             y() * rhs.z() - z() * rhs.y(),
@@ -79,7 +87,7 @@ struct vec3
         return { x() / n, y() / n, z() / n };
     }
 
-    vec3 cwiseMin(vec3 rhs) const
+    vec3 cwiseMin(const vec3& rhs) const
     {
         return {
             std::min(v[0], rhs.v[0]),
@@ -87,7 +95,7 @@ struct vec3
             std::min(v[2], rhs.v[2]) };
     }
 
-    vec3 cwiseMax(vec3 rhs) const
+    vec3 cwiseMax(const vec3& rhs) const
     {
         return {
             std::max(v[0], rhs.v[0]),
@@ -131,7 +139,7 @@ struct mat
     // ambient, diffuse, specular, reflection coefficients (rgb)
     // range: [0, 1]
     vec3 ka, kd, ks, km;
-    // specular (phong) exponent
+    // specular exponent (aka shininess)
     float ns;
 
     // Default for faces without material.
@@ -200,31 +208,59 @@ struct camera
     }
 };
 
-using TriIndexVector = std::vector<std::array<int, 3>>;
-
-struct SceneData
+// Axis-aligned bounding box
+struct bbox
 {
-    SceneData(const fs::path& scene_path);
+    vec3 cmin; // Min corner
+    vec3 cmax; // Max corner
 
-    // scene
+    bbox() :
+        cmin(std::numeric_limits<float>::infinity()),
+        cmax(-std::numeric_limits<float>::infinity())
+    {}
+
+    vec3 center() const { return 0.5 * (cmin + cmax); }
+
+    static constexpr uint nserial = 2 * vec3::nserial;
+
+    void serialize(uint* p) const
+    {
+        cmin.serialize(p);
+        cmax.serialize(p + vec3::nserial);
+    }
+};
+
+struct tri
+{
+    std::array<int, 3> Vidx; // vertex indices
+    std::array<int, 3> NVidx; // normal indices
+#if ENABLE_TEXTURES
+    std::array<int, 3> UVidx; // texcooord indices
+#endif
+    int matid; // material index
+    bbox bb; // bounding box. not serialized
+};
+
+struct Scene
+{
+    // max_bv must be a power of 2.
+    Scene(const fs::path& scene_path, const uint max_bv);
+
     camera C; // camera
     std::vector<light> L; // lights
     std::pair<uint, uint> R; // resolution
     
-    // geometry
-    std::vector<vec3> V; // Vertices 
-    std::vector<vec3> NV; // Normals
-    TriIndexVector F; // Face indices
-    TriIndexVector NF; // Face normal indices
-
-    // materials
-    std::vector<mat> M; // Materials
-    std::vector<int> MF; // Face material indices
-
-    // textures (not serialized for now)
+    std::vector<vec3> V; // vertices 
+    std::vector<vec3> NV; // normals
+#if ENABLE_TEXTURES
     std::vector<uv> UV;// Texture coords
-    TriIndexVector UF; // Face texture coord indices
+#endif
+    std::vector<mat> M; // materials
 
+    std::vector<tri> F; // triangles
+
+    // bounding volumes and num tris held by each
+    std::vector<std::pair<bbox, uint>> BV;
 
     bool ok() const { return m_ok; }
     operator bool() const { return ok(); }
@@ -244,7 +280,12 @@ private:
     uint nsM()  const { return uint(M.size() * mat::nserial); }
     uint nsMF() const { return uint(MF.size()); }
 
+    int init_scene(const fs::path& scene_path, const uint max_bv);
+    int init_bvs(const uint max_bv);
+    void gather_bvs(tri* tris_beg, tri* tris_end, uint depth = 0);
+
 private:
+    uint bv_stop_depth;
     bool m_ok;
 };
 
@@ -275,60 +316,5 @@ inline uint* vserialize(const TriIndexVector& v, uint* p)
     return p;
 }
 
-struct BBox
-{
-    vec3 cmin; // Min corner
-    vec3 cmax; // Max corner
-
-    BBox() :
-        cmin(std::numeric_limits<float>::infinity()),
-        cmax(-std::numeric_limits<float>::infinity())
-    {}
-
-    vec3 center() const { return 0.5 * (cmin + cmax); }
-
-    static constexpr uint nserial = 2 * vec3::nserial;
-
-    void serialize(uint* p) const
-    {
-        cmin.serialize(p);
-        cmax.serialize(p + vec3::nserial);
-    }
-};
-
-struct BVNode
-{
-    // if tri==-1 this node is a bbox, else it
-    // is a triangle node with face index 'tri'
-    int tri;
-    int ndesc; // num descendants (leaves + tree nodes)
-    int nleaves; // num leaves
-    BBox bbox;
-    BVNode* left;
-    BVNode* right;
-};
-
-// Bounding-volume tree (axis-aligned).
-// 
-// The root node always exists (even if num tris are 0).
-// If the scene has only 1 triangle, it is encoded as
-// a root node with one child triangle.
-struct BVTree
-{
-    BVTree(const SceneData& model);
-    ~BVTree();
-    
-    BVNode* root() { return m_root; }
-
-    bool ok() const { return m_ok; }
-    operator bool() const { return ok(); }
-
-    uint nserial() const;
-    void serialize(uint* buf) const;
-
-private:
-    BVNode* m_root;
-    bool m_ok;
-};
 
 #endif
