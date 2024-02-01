@@ -280,7 +280,9 @@ private:
     uint nsM()  const { return uint(M.size() * mat::nserial); }
     uint nsMF() const { return uint(MF.size()); }
 
-    int init_scene(const fs::path& scene_path, const uint max_bv);
+    int read_scene(const fs::path& scenepath, std::vector<fs::path>& out_objpaths);
+    int read_objs(const std::vector<fs::path>& objpaths);
+
     int init_bvs(const uint max_bv);
     void gather_bvs(tri* tris_beg, tri* tris_end, uint depth = 0);
 

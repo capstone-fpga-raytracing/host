@@ -87,9 +87,9 @@ constexpr uint bswap(uint v)
 #endif
 }
 
-// Fast log2 for unsigned integers (tzcnt/bsf instruction)
+// Fast log2 for unsigned integers (uses lzcnt/bsr)
 template <typename T>
-constexpr T ulog2(T val) { return std::countr_zero(val); }
+constexpr T ulog2(T val) { return std::bit_width(val) - 1; }
 
 // Fast pow of 2 check for unsigned integers
 template <typename T>

@@ -32,46 +32,6 @@ static inline bbox get_nodes_bbox(
     return bb;
 }
 
-// Gather bboxes at stop_depth, and sort triangles in order of bboxes.
-void Scene::gather_bvs(tri* tris_beg, tri* tris_end, uint depth)
-{
-    bbox bb = get_nodes_bbox(tris_beg, tris_end);
-
-    const int max_dim = (bb.cmax - bb.cmin).maxDim();
-    // sort along longest dimension
-    std::sort(tris_beg, tris_end, [=](const auto& lhs, const auto& rhs) {
-        return lhs.bb.center()[max_dim] < rhs.bb.center()[max_dim]; });
-
-    auto ntris = tris_end - tris_beg;
-    if (depth != bv_stop_depth)
-    {
-        auto lhs_size = ntris / 2;
-        assert(lhs_size != 0 && "should not be possible");
-
-        gather_bvs(tris_beg, tris_beg + lhs_size, depth + 1);
-        gather_bvs(tris_beg + lhs_size, tris_end, depth + 1);
-    }
-    else { BV.emplace_back(std::move(bb), uint(ntris)); }
-}
-
-int Scene::init_bvs(const uint max_bv)
-{
-    if (!is_powof2(max_bv)) {
-        ERROR("max-bv is not a power of 2");
-    }
-
-    bv_stop_depth = ulog2(max_bv);
-    uint last_full_depth = ulog2(std::bit_floor(F.size()));
-
-    if (bv_stop_depth >= last_full_depth && bv_stop_depth != 0) {
-        bv_stop_depth = last_full_depth - 1;
-    }
-
-    gather_bvs(F.data(), F.data() + F.size());
-    return 0;
-}
-
-
 #define SCERROR(lineno, msg) \
     do { \
         std::cerr << "line " << lineno << ": " << msg << "\n"; \
@@ -99,10 +59,8 @@ static inline bool parsenum3(std::string_view& str, T& a, T& b, T& c)
     return parsenum(str, a) && parsenum(str, b) && parsenum(str, c);
 }
 
-int Scene::init_scene(const fs::path& scpath, const uint max_bv)
+int Scene::read_scene(const fs::path& scpath, std::vector<fs::path>& objpaths)
 {
-    // --------------- Parse scene file ---------------
-
     BufWithSize<char> scbuf;
     {
         scopedFILE scfile = SAFE_FOPEN(scpath.c_str(), "rb");
@@ -120,7 +78,6 @@ int Scene::init_scene(const fs::path& scpath, const uint max_bv)
     }
 
     auto scdir = scpath.parent_path();
-    std::vector<fs::path> objpaths;
 
     int lineno = 0;
     size_t scpos = 0;
@@ -262,8 +219,11 @@ int Scene::init_scene(const fs::path& scpath, const uint max_bv)
         else { SCERROR(lineno, "unrecognized prop"); }
     }
 
-    // --------------- Parse obj + mtl files ---------------
+    return 0;
+}
 
+int Scene::read_objs(const std::vector<fs::path>& objpaths)
+{
     bool any_missing_mat = false;
 #if ENABLE_TEXTURES
     bool any_missing_uv = false;
@@ -393,13 +353,8 @@ int Scene::init_scene(const fs::path& scpath, const uint max_bv)
             }
         }
     }
-    if (F.empty() || V.empty()) {
-        std::cerr << scpath << ": no faces or vertices found\n";
-        return -1;
-    }
 
-    // --------------- Fix bad faces ---------------
-    
+    // --------------- Fix bad faces ---------------  
     if (badFidx.size() != 0)
     {
         int default_matid = -1;
@@ -438,7 +393,7 @@ int Scene::init_scene(const fs::path& scpath, const uint max_bv)
             {
                 // do the simple thing (flat shading).
                 // ideally this would use smoothing groups or do some
-                // kind of automatic smoothing, but I dont have time :')
+                // kind of automatic smoothing
                 vec3 e0 = V[t.Vidx[1]] - V[t.Vidx[0]];
                 vec3 e1 = V[t.Vidx[2]] - V[t.Vidx[0]];
                 vec3 nv = e0.cross(e1).normalized();
@@ -450,14 +405,61 @@ int Scene::init_scene(const fs::path& scpath, const uint max_bv)
         }
     }
 
-    return init_bvs(max_bv);
+    if (F.empty() || V.empty()) {
+        ERROR("no faces or vertices found");
+    }
+    return 0;
+}
+
+
+// Gather bboxes at stop_depth, and sort triangles in order of bboxes.
+void Scene::gather_bvs(tri* tris_beg, tri* tris_end, uint depth)
+{
+    bbox bb = get_nodes_bbox(tris_beg, tris_end);
+
+    const int max_dim = (bb.cmax - bb.cmin).maxDim();
+    // sort along longest dimension
+    std::sort(tris_beg, tris_end, [=](const auto& lhs, const auto& rhs) {
+        return lhs.bb.center()[max_dim] < rhs.bb.center()[max_dim]; });
+
+    auto ntris = tris_end - tris_beg;
+    if (depth != bv_stop_depth)
+    {
+        auto lhs_size = ntris / 2;
+        assert(lhs_size != 0 && "should not be possible");
+
+        gather_bvs(tris_beg, tris_beg + lhs_size, depth + 1);
+        gather_bvs(tris_beg + lhs_size, tris_end, depth + 1);
+    }
+    else { BV.emplace_back(std::move(bb), uint(ntris)); }
+}
+
+int Scene::init_bvs(const uint max_bv)
+{
+    if (!is_powof2(max_bv)) {
+        ERROR("max-bv is not a power of 2");
+    }
+
+    bv_stop_depth = ulog2(max_bv);
+    uint last_full_depth = ulog2(F.size());
+
+    // limit to one before last so that bvs are never empty
+    if (bv_stop_depth >= last_full_depth && bv_stop_depth != 0) {
+        bv_stop_depth = last_full_depth - 1;
+    }
+
+    gather_bvs(F.data(), F.data() + F.size());
+    return 0;
 }
 
 Scene::Scene(const fs::path& scpath, const uint max_bv) :
     C({ 0 }), R(0, 0), m_ok(false)
 {
-    int e = init_scene(scpath, max_bv);
-    m_ok = (e == 0);
+    std::vector<fs::path> objpaths;
+    m_ok = 
+        read_scene(scpath, objpaths) == 0 &&
+        read_objs(objpaths) == 0 &&
+        init_bvs(max_bv) == 0;
 }
 
 uint Scene::nserial() const
@@ -497,7 +499,7 @@ void Scene::serialize(uint* p) const
     p = vserialize(MF, p);
 }
 
-// not used. needs to be updated for scene and mtl files
+// not used. needs to be updated for scene, obj and mtl files
 #if 0
 bool write_model(const char* obj_file, const char* mtl_file, Scene& m)
 {
