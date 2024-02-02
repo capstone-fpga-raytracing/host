@@ -5,6 +5,7 @@
 #include <iostream>
 #include <charconv>
 
+#include "rapidobj/rapidobj.hpp"
 #include "defs.hpp"
 
 
@@ -65,7 +66,7 @@ int Scene::read_scene(const fs::path& scpath, std::vector<fs::path>& objpaths)
     {
         scopedFILE scfile = SAFE_FOPEN(scpath.c_str(), "rb");
         if (!scfile) {
-            ERROR("could not open scene file");
+            hERROR("could not open scene file");
         }   
         scbuf.size = fs::file_size(scpath);
         scbuf.ptr = std::make_unique<char[]>(scbuf.size);
@@ -73,7 +74,7 @@ int Scene::read_scene(const fs::path& scpath, std::vector<fs::path>& objpaths)
         // read the whole file. this is okay as a .scene file is always small
         // and we always need to parse all of it
         if (std::fread(scbuf.get(), 1, scbuf.size, scfile.get()) != scbuf.size) {
-            ERROR("could not read scene file");
+            hERROR("could not read scene file");
         }
     }
 
@@ -406,7 +407,7 @@ int Scene::read_objs(const std::vector<fs::path>& objpaths)
     }
 
     if (F.empty() || V.empty()) {
-        ERROR("no faces or vertices found");
+        hERROR("no faces or vertices found");
     }
     return 0;
 }
@@ -423,7 +424,7 @@ void Scene::gather_bvs(tri* tris_beg, tri* tris_end, uint depth)
         return lhs.bb.center()[max_dim] < rhs.bb.center()[max_dim]; });
 
     auto ntris = tris_end - tris_beg;
-    if (depth != bv_stop_depth)
+    if (depth != m_bv_stop_depth)
     {
         auto lhs_size = ntris / 2;
         assert(lhs_size != 0 && "should not be possible");
@@ -437,23 +438,23 @@ void Scene::gather_bvs(tri* tris_beg, tri* tris_end, uint depth)
 int Scene::init_bvs(const uint max_bv)
 {
     if (!is_powof2(max_bv)) {
-        ERROR("max-bv is not a power of 2");
+        hERROR("max-bv is not a power of 2");
     }
 
-    bv_stop_depth = ulog2(max_bv);
+    m_bv_stop_depth = ulog2(max_bv);
     uint last_full_depth = ulog2(F.size());
 
     // limit to one before last so that bvs are never empty
-    if (bv_stop_depth >= last_full_depth && bv_stop_depth != 0) {
-        bv_stop_depth = last_full_depth - 1;
+    if (m_bv_stop_depth >= last_full_depth && m_bv_stop_depth != 0) {
+        m_bv_stop_depth = last_full_depth - 1;
     }
 
     gather_bvs(F.data(), F.data() + F.size());
     return 0;
 }
 
-Scene::Scene(const fs::path& scpath, const uint max_bv) :
-    C({ 0 }), R(0, 0), m_ok(false)
+Scene::Scene(const fs::path& scpath, const uint max_bv, serial_format ser_fmt) :
+    C({ 0 }), R(0, 0), m_serfmt(ser_fmt), m_ok(false)
 {
     std::vector<fs::path> objpaths;
     m_ok = 
@@ -462,41 +463,142 @@ Scene::Scene(const fs::path& scpath, const uint max_bv) :
         init_bvs(max_bv) == 0;
 }
 
+// nserial, resX, resY, numL, numBV, camOff, BVoff, 
+// Voff, NVoff, Foff, NFoff, MFoff, Moff, Loff, optional: UVoff, UFoff
+static constexpr int nhdr_noduplicate = 14 + 2 * textures_enabled();
+
+// nserial, resX, resY, numL, numBV, camOff, BVoff, 
+// FVoff, FNVoff, FMoff, Loff, optional: FUVoff
+static constexpr int nhdr_duplicate = 11 + textures_enabled();
+
 uint Scene::nserial() const
 {
-    return Nwordshdr + camera::nserial +
-        nsL() + nsV() + nsNV() + nsF() + nsNF() + nsM() + nsMF();
+    switch (m_serfmt)
+    {
+    case serial_format::NoDuplicate:
+    {
+        uint ret = nhdr_noduplicate + camera::nserial +
+            vnserial(BV) + vnserial(V) + vnserial(NV) +
+            vnserial(F) + vnserial(M) + vnserial(L);
+#if ENABLE_TEXTURES
+        ret += vnserial(UV);
+#endif
+        return ret;
+    }
+
+    case serial_format::Duplicate:
+    {
+        uint ret = nhdr_duplicate + camera::nserial +
+            vnserial(BV) +
+            (uint(F.size()) * (6 * vec3::nserial + mat::nserial)) +
+            vnserial(L);
+#if ENABLE_TEXTURES
+        ret += (uint(F.size()) * 3 * uv::nserial);
+#endif
+        return ret;
+    }
+    }
 }
 
 void Scene::serialize(uint* p) const
-{ 
-    /* size  */ p[0] = nserial();
-    /* numV  */ p[1] = uint(V.size());
-    /* numF  */ p[2] = uint(F.size());
-    /* numL  */ p[3] = uint(L.size());
-    /* Loff  */ p[4] = Nwordshdr + camera::nserial;
-    /* Voff  */ p[5] = p[4] + nsL();
-    /* NVoff */ p[6] = p[5] + nsV();
-    /* Foff  */ p[7] = p[6] + nsNV();
-    /* NFoff */ p[8] = p[7] + nsF();
-    /* Moff  */ p[9] = p[8] + nsNF();
-    /* MFoff */ p[10] = p[9] + nsM();
-    /* resX  */ p[11] = R.first;
-    /* resY  */ p[12] = R.second;
-    
-    assert(p[10] + nsMF() == nserial() 
-        && "Header size not set correctly");
-    p += Nwordshdr;
+{
+    *p++ = nserial();
+    *p++ = R.first;
+    *p++ = R.second;
+    *p++ = uint(L.size());
+    *p++ = uint(BV.size());
+     
+    switch (m_serfmt)
+    {
+    case serial_format::NoDuplicate:
+    {
+        uint off = nhdr_noduplicate;
+        *p++ = off; off += camera::nserial;
+        *p++ = off; off += vnserial(BV);
+        *p++ = off; off += vnserial(V);
+        *p++ = off; off += vnserial(NV);
+        *p++ = off; off += (uint(F.size()) * 3);
+        *p++ = off; off += (uint(F.size()) * 3);
+        *p++ = off; off += uint(F.size());
+        *p++ = off; off += vnserial(M);      
+        *p++ = off; off += vnserial(L);
+#if ENABLE_TEXTURES
+        *p++ = off; off += vnserial(UV);
+        *p++ = off; off += (uint(F.size()) * 3);
+#endif
+        C.serialize(p);
+        p += camera::nserial;
 
-    C.serialize(p); 
-    p += camera::nserial;
-    p = vserialize(L, p);
-    p = vserialize(V, p);
-    p = vserialize(NV, p);
-    p = vserialize(F, p);
-    p = vserialize(NF, p);
-    p = vserialize(M, p);
-    p = vserialize(MF, p);
+        p = vserialize(BV, p);
+        p = vserialize(V, p);
+        p = vserialize(NV, p);
+
+        for (size_t i = 0; i < F.size(); ++i) {
+            ranges::copy(F[i].Vidx, p); p += 3;
+        }
+        for (size_t i = 0; i < F.size(); ++i) {
+            ranges::copy(F[i].NVidx, p); p += 3;
+        }
+        for (size_t i = 0; i < F.size(); ++i) {
+            *p++ = F[i].matid;
+        }
+
+        p = vserialize(M, p);
+        p = vserialize(L, p);
+#if ENABLE_TEXTURES
+        p = vserialize(UV, p);
+        for (size_t i = 0; i < F.size(); ++i) {
+            ranges::copy(F[i].UVidx, p); p += 3;
+        }
+#endif
+        break;
+    }
+
+    case serial_format::Duplicate:
+        uint off = nhdr_duplicate;
+        *p++ = off; off += camera::nserial;
+        *p++ = off; off += vnserial(BV);
+        *p++ = off; off += (uint(F.size()) * 3 * vec3::nserial);
+        *p++ = off; off += (uint(F.size()) * 3 * vec3::nserial);
+        *p++ = off; off += (uint(F.size()) * mat::nserial);
+        *p++ = off; off += vnserial(L);
+#if ENABLE_TEXTURES
+        *p++ = off; off += (uint(F.size()) * 3 * uv::nserial);
+#endif
+        C.serialize(p);
+        p += camera::nserial;
+
+        p = vserialize(BV, p);
+
+        for (size_t i = 0; i < F.size(); ++i) {
+            for (int j = 0; j < 3; ++j) {
+                V[F[i].Vidx[j]].serialize(p); 
+                p += vec3::nserial;
+            }
+        }
+        for (size_t i = 0; i < F.size(); ++i) {
+            for (int j = 0; j < 3; ++j) {
+                NV[F[i].NVidx[j]].serialize(p);
+                p += vec3::nserial;
+            }
+        }
+        for (size_t i = 0; i < F.size(); ++i) {
+            M[F[i].matid].serialize(p);
+            p += mat::nserial;
+        }
+
+        p = vserialize(L, p);
+
+#if ENABLE_TEXTURES
+        for (size_t i = 0; i < F.size(); ++i) {
+            for (int j = 0; j < 3; ++j) {
+                UV[F[i].UVidx[j]].serialize(p);
+                p += uv::nserial;
+            }
+        }
+#endif
+        break;
+    }
 }
 
 // not used. needs to be updated for scene, obj and mtl files

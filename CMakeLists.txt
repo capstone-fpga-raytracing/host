@@ -23,7 +23,6 @@ target_link_libraries(host PRIVATE rapidobj::rapidobj)
 set_property(TARGET host PROPERTY CXX_STANDARD 23)
 set_property(TARGET host PROPERTY CXX_STANDARD_REQUIRED)
 target_compile_definitions(host PRIVATE _CRT_SECURE_NO_WARNINGS)
-target_compile_definitions(host PRIVATE _CRT_SECURE_NO_DEPRECATE)
 
 if (NOT CMAKE_BUILD_TYPE)
     message(STATUS "No build type selected, default to Release")

@@ -9,12 +9,21 @@
 #include <vector>
 #include <array>
 
-#include "rapidobj/rapidobj.hpp"
 #include "utils.hpp"
 
 #define ENABLE_TEXTURES 0
 
-#define ERROR(msg) \
+constexpr bool textures_enabled()
+{
+#if ENABLE_TEXTURES
+    return true;
+#else
+    return false;
+#endif
+}
+
+// can't be called ERROR (windows already uses this name)
+#define hERROR(msg) \
     do { \
         std::cerr << "Error: " << msg << "\n"; \
         return -1; \
@@ -170,7 +179,11 @@ struct mat
 };
 
 // Texture coordinate
-struct uv { float u, v; };
+struct uv 
+{
+    float u, v; 
+    static constexpr uint nserial = 2;
+};
 
 struct light
 {
@@ -230,6 +243,19 @@ struct bbox
     }
 };
 
+struct bv
+{
+    bbox bb;
+    uint ntris;
+    static constexpr uint nserial = bbox::nserial + 1;
+
+    void serialize(uint* p) const
+    {
+        bb.serialize(p);
+        p[bbox::nserial] = ntris;
+    }
+};
+
 struct tri
 {
     std::array<int, 3> Vidx; // vertex indices
@@ -238,17 +264,30 @@ struct tri
     std::array<int, 3> UVidx; // texcooord indices
 #endif
     int matid; // material index
-    bbox bb; // bounding box. not serialized
+    bbox bb; // not serialized
+
+    static constexpr uint nserial = textures_enabled() ? 10 : 7;
+};
+
+enum class serial_format
+{
+    // duplicate vertices, normals, and UVs instead of using indices.
+    // easier + quicker to read on FPGA, but increases
+    // memory usage significantly
+    Duplicate,
+    // keep the indices and don't duplicate.
+    NoDuplicate
 };
 
 struct Scene
 {
     // max_bv must be a power of 2.
-    Scene(const fs::path& scene_path, const uint max_bv);
+    Scene(const fs::path& scene_path, const uint max_bv, 
+        serial_format ser_fmt = serial_format::Duplicate);
 
     camera C; // camera
-    std::vector<light> L; // lights
     std::pair<uint, uint> R; // resolution
+    std::vector<light> L; // lights
     
     std::vector<vec3> V; // vertices 
     std::vector<vec3> NV; // normals
@@ -258,9 +297,7 @@ struct Scene
     std::vector<mat> M; // materials
 
     std::vector<tri> F; // triangles
-
-    // bounding volumes and num tris held by each
-    std::vector<std::pair<bbox, uint>> BV;
+    std::vector<bv> BV; // bounding volumes
 
     bool ok() const { return m_ok; }
     operator bool() const { return ok(); }
@@ -269,17 +306,6 @@ struct Scene
     void serialize(uint* buf) const;
 
 private:
-    static constexpr int Nwordshdr = 13; // # words in header
-
-    // sizes of each member when serialized
-    uint nsL()  const { return uint(L.size() * light::nserial); }
-    uint nsV()  const { return uint(V.size() * vec3::nserial); }
-    uint nsNV() const { return uint(NV.size() * vec3::nserial); }
-    uint nsF()  const { return uint(F.size() * F[0].size()); }
-    uint nsNF() const { return uint(NF.size() * NF[0].size()); }
-    uint nsM()  const { return uint(M.size() * mat::nserial); }
-    uint nsMF() const { return uint(MF.size()); }
-
     int read_scene(const fs::path& scenepath, std::vector<fs::path>& out_objpaths);
     int read_objs(const std::vector<fs::path>& objpaths);
 
@@ -287,13 +313,33 @@ private:
     void gather_bvs(tri* tris_beg, tri* tris_end, uint depth = 0);
 
 private:
-    uint bv_stop_depth;
+    serial_format m_serfmt;
+    uint m_bv_stop_depth;
     bool m_ok;
 };
 
-template <class T>
+template <typename T>
+concept has_nserial = std::is_same_v<
+    std::remove_cvref_t<decltype(T::nserial)>, uint>; // scary
+
+template <typename T>
+concept serializable = has_nserial<T> && requires(T t) {
+    t.serialize(std::declval<uint*>());
+};
+
+// Get size of vector when serialized. 
+template <typename T>
+inline uint vnserial(const std::vector<T>& vec)
+{
+    static_assert(has_nserial<T>, "T does not have nserial");
+    return uint(vec.size()) * T::nserial;
+}
+
+// Serialize vector.
+template <typename T>
 inline uint* vserialize(const std::vector<T>& v, uint* p)
 {
+    static_assert(serializable<T>, "T is not serializable");
     for (size_t i = 0; i < v.size(); ++i)
     {
         v[i].serialize(p);
@@ -301,22 +347,5 @@ inline uint* vserialize(const std::vector<T>& v, uint* p)
     }
     return p;
 }
-
-inline uint* vserialize(const std::vector<int>& v, uint* p)
-{
-    std::copy(v.begin(), v.end(), p);
-    return p + v.size();
-}
-
-inline uint* vserialize(const TriIndexVector& v, uint* p)
-{
-    for (size_t i = 0; i < v.size(); ++i)
-    {
-        std::copy(v[i].begin(), v[i].end(), p);
-        p += 3;
-    }
-    return p;
-}
-
 
 #endif

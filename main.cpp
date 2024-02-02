@@ -16,13 +16,13 @@
 static int from_bin(const fs::path& inpath, BufWithSize<uint>& buf)
 {
     scopedFILE f = SAFE_FOPEN(inpath.c_str(), "rb");
-    if (!f) { ERROR("could not open input file"); }
+    if (!f) { hERROR("could not open input file"); }
 
     buf.size = fs::file_size(inpath) / 4;
     buf.ptr = std::make_unique<uint[]>(buf.size);
 
     if (std::fread(buf.get(), 4, buf.size, f.get()) != buf.size) {
-        ERROR("could not read input file");
+        hERROR("could not read input file");
     }
     return 0;
 }
@@ -30,10 +30,10 @@ static int from_bin(const fs::path& inpath, BufWithSize<uint>& buf)
 static int to_bin(std::string_view outpath, BufWithSize<uint>& buf)
 {
     scopedFILE f = SAFE_AFOPEN(outpath.data(), "wb");
-    if (!f) { ERROR("could not open output file"); }
+    if (!f) { hERROR("could not open output file"); }
 
     if (std::fwrite(buf.get(), 4, buf.size, f.get()) != buf.size) {
-        ERROR("could not write output file");
+        hERROR("could not write output file");
     }
     return 0;
 }
@@ -64,10 +64,10 @@ static int to_hdr(std::string_view outpath, BufWithSize<uint>& buf)
     out.append("\n};\n");
 
     scopedFILE f = SAFE_AFOPEN(outpath.data(), "wb");
-    if (!f) { ERROR("could not open output file"); }
+    if (!f) { hERROR("could not open output file"); }
 
     if (std::fwrite(out.c_str(), 1, out.length(), f.get()) != out.length()) {
-        ERROR("could not write output file");
+        hERROR("could not write output file");
     }
 
     return 0;
@@ -83,7 +83,7 @@ static int raytrace(std::string_view outpath, std::string_view name,
         name = name.substr(0, NET_MAX_STRING);
     } 
     if (TCP_send((byte*)buf.get(), nbytes, name.data(), ipaddr.data(), port.data()) != nbytes) {
-        ERROR("failed to send scene");
+        hERROR("failed to send scene");
     }
 
     std::cout << "Waiting for image...\n";
@@ -96,13 +96,13 @@ static int raytrace(std::string_view outpath, std::string_view name,
 
     uint resX = buf.ptr[11], resY = buf.ptr[12]; // nasty
     if (nrecv < 0) {
-        ERROR("failed to receive image");
+        hERROR("failed to receive image");
     }
     else if (nrecv != (resX * resY * 3)) {
-        ERROR("received image dimensions are incorrect");
+        hERROR("received image dimensions are incorrect");
     }
 
-#define ERRORSAVE ERROR("failed to save image")
+#define ERRORSAVE hERROR("failed to save image")
 
     fs::path outfspath = outpath;
     fs::path outext = outfspath.extension();
@@ -135,9 +135,12 @@ int main(int argc, char** argv)
         ("o,out", "Output file (.bin, .bmp or .png).", cxxopts::value<std::string>(), "<file>")
         ("rt", "Raytrace scene on FPGA. Faster if scene is in binary format.", 
             cxxopts::value<std::vector<std::string>>(), "<fpga_ipaddr>,<port>")
-        ("max-bv", "Max bounding volumes. Must be a power of 2.", cxxopts::value<uint>()->default_value("128"))
-        ("b,tobin", "Serialize scene file to binary format.")
-        ("c,tohdr", "Convert scene file into C header.")       
+        ("max-bv", "Max bounding volumes. Must be a power of 2.",
+            cxxopts::value<uint>()->default_value("128"))
+        ("ser-fmt", "Serialization format.",
+            cxxopts::value<std::string>()->default_value("nodup"), "{dup|nodup}")
+        ("b,tobin", "Serialize scene to binary format.")
+        ("c,tohdr", "Serialize scene into C header.")      
         ("e,eswap", "Swap endianness.");
         
     cxxopts::ParseResult args;
@@ -145,7 +148,7 @@ int main(int argc, char** argv)
         args = opts.parse(argc, argv);
     }
     catch (std::exception& e) {
-        ERROR(e.what());
+        hERROR(e.what());
     }
    
     if (args["help"].as<bool>()) {
@@ -154,7 +157,7 @@ int main(int argc, char** argv)
     }
 
     if (args["in"].count() == 0) {
-        ERROR("no input file");
+        hERROR("no input file");
     }
     
     bool tobin = args["tobin"].count() != 0;
@@ -163,8 +166,18 @@ int main(int argc, char** argv)
     bool eswap = args["eswap"].as<bool>();
 
     int tototal = int(tobin) + int(tohdr) + int(tofpga);
-    if (tototal != 1) { 
-        ERROR("provide one of tobin, tohdr, or rt"); 
+    if (tototal != 1) {
+        hERROR("provide one of tobin, tohdr, or rt");
+    }
+
+    auto& serfmtstr = args["ser-fmt"].as<std::string>();
+    bool dup = serfmtstr == "dup";
+    bool nodup = serfmtstr == "nodup";
+    serial_format serfmt = dup ?
+        serial_format::Duplicate : serial_format::NoDuplicate;
+
+    if (!dup && !nodup) {
+        hERROR("invalid serialization format");
     }
 
     fs::path inpath = args["in"].as<std::string>();
@@ -174,7 +187,7 @@ int main(int argc, char** argv)
     BufWithSize<uint> Scbuf;
     if (inpath.extension() == ".scene")
     {
-        Scene scene(inpath, args["max-bv"].as<uint>());
+        Scene scene(inpath, args["max-bv"].as<uint>(), serfmt);
         if (!scene) { return EXIT_FAILURE; }
 
         Scbuf.size = scene.nserial();
@@ -183,7 +196,7 @@ int main(int argc, char** argv)
     } 
     else {
         if (tobin && !eswap) {
-            ERROR("scene is already in binary format");
+            hERROR("scene is already in binary format");
         }
         int e = from_bin(inpath, Scbuf);
         if (e) { return e; }
@@ -195,31 +208,32 @@ int main(int argc, char** argv)
             for (uint i = 0; i < Scbuf.size; ++i) {
                 Scbuf.ptr[i] = bswap(Scbuf.ptr[i]);
             }
-        } else { std::cout << "Warning: ignoring eswap...\n"; }
+        } else { std::cout << "Ignored --eswap since target is C header.\n"; }
     }
 
     // ------------ Do output ------------ 
+    int err;
     if (tofpga)
     {
         auto& rtargs = args["rt"].as<std::vector<std::string>>();
         if (rtargs.size() != 2) { 
-            ERROR("missing rt options"); 
+            hERROR("missing rt options"); 
         }
-        return raytrace(outpath, inpath.filename().string(), rtargs[0], rtargs[1], Scbuf);
+        err = raytrace(outpath, inpath.filename().string(), rtargs[0], rtargs[1], Scbuf);
     }
     else if (tobin) {
-        return to_bin(outpath, Scbuf);
+        err = to_bin(outpath, Scbuf);
     }
     else if (tohdr) { 
-        return to_hdr(outpath, Scbuf); 
+        err = to_hdr(outpath, Scbuf); 
     }
     else { 
-        assert("unimplemented"); 
+        assert(false);
         std::unreachable(); 
     }
+    if (err) { return err; }
 
     auto tend = chrono::high_resolution_clock::now();
-
     std::cout << "Done in ";
     print_duration(std::cout, tend - tbeg);
     std::cout << ".\n";
