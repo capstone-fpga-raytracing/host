@@ -22,15 +22,6 @@ constexpr bool textures_enabled()
 #endif
 }
 
-// can't be called ERROR (windows already uses this name)
-#define hERROR(msg) \
-    do { \
-        std::cerr << "Error: " << msg << "\n"; \
-        return -1; \
-    } while (0)
-
-static_assert(std::numeric_limits<unsigned>::digits == 32, "int is not 32-bit");
-
 // 3d vector
 struct vec3
 {
@@ -331,7 +322,7 @@ concept serializable = has_nserial<T> && requires(T t) {
 template <typename T>
 inline uint vnserial(const std::vector<T>& vec)
 {
-    static_assert(has_nserial<T>, "T does not have nserial");
+    static_assert(has_nserial<T>, "type does not have nserial");
     return uint(vec.size()) * T::nserial;
 }
 
@@ -339,7 +330,7 @@ inline uint vnserial(const std::vector<T>& vec)
 template <typename T>
 inline uint* vserialize(const std::vector<T>& v, uint* p)
 {
-    static_assert(serializable<T>, "T is not serializable");
+    static_assert(serializable<T>, "type is not serializable");
     for (size_t i = 0; i < v.size(); ++i)
     {
         v[i].serialize(p);

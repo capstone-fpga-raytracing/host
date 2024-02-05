@@ -12,33 +12,7 @@
 #include "io.h"
 
 
-
-static int from_bin(const fs::path& inpath, BufWithSize<uint>& buf)
-{
-    scopedFILE f = SAFE_FOPEN(inpath.c_str(), "rb");
-    if (!f) { hERROR("could not open input file"); }
-
-    buf.size = fs::file_size(inpath) / 4;
-    buf.ptr = std::make_unique<uint[]>(buf.size);
-
-    if (std::fread(buf.get(), 4, buf.size, f.get()) != buf.size) {
-        hERROR("could not read input file");
-    }
-    return 0;
-}
-
-static int to_bin(std::string_view outpath, BufWithSize<uint>& buf)
-{
-    scopedFILE f = SAFE_AFOPEN(outpath.data(), "wb");
-    if (!f) { hERROR("could not open output file"); }
-
-    if (std::fwrite(buf.get(), 4, buf.size, f.get()) != buf.size) {
-        hERROR("could not write output file");
-    }
-    return 0;
-}
-
-static int to_hdr(std::string_view outpath, BufWithSize<uint>& buf)
+static int to_hdr(const fs::path& outpath, BufWithSize<uint>& buf)
 {
     std::string out = "static const int bin[] = {";
 
@@ -63,38 +37,26 @@ static int to_hdr(std::string_view outpath, BufWithSize<uint>& buf)
     }
     out.append("\n};\n");
 
-    scopedFILE f = SAFE_AFOPEN(outpath.data(), "wb");
-    if (!f) { hERROR("could not open output file"); }
-
-    if (std::fwrite(out.c_str(), 1, out.length(), f.get()) != out.length()) {
-        hERROR("could not write output file");
-    }
-
-    return 0;
+    return write_file(outpath, out.c_str(), out.length());
 }
 
-static int raytrace(std::string_view outpath, std::string_view name,
+static int raytrace(const fs::path& outpath, 
     std::string_view ipaddr, std::string_view port, BufWithSize<uint>& buf)
 {
-    std::cout << "Sending " << name << "to FPGA...\n";
+    std::cout << "Sending scene to FPGA...\n";
 
     const uint nbytes = uint(buf.size * 4);
-    if (name.length() > NET_MAX_STRING) {
-        name = name.substr(0, NET_MAX_STRING);
-    } 
-    if (TCP_send((byte*)buf.get(), nbytes, name.data(), ipaddr.data(), port.data()) != nbytes) {
+    if (TCP_send((byte*)buf.get(), nbytes, ipaddr.data(), port.data()) != nbytes) {
         hERROR("failed to send scene");
     }
 
     std::cout << "Waiting for image...\n";
 
-    byte* pdata; char* recv_name;
-    int nrecv = TCP_recv(&pdata, &recv_name, port.data(), true);
-
-    std::free(recv_name);
+    byte* pdata;
+    int nrecv = TCP_recv(&pdata, port.data(), true);
     auto data = scoped_cptr<byte[]>(pdata);
 
-    uint resX = buf.ptr[11], resY = buf.ptr[12]; // nasty
+    uint resX = buf.ptr[1], resY = buf.ptr[2]; // nasty
     if (nrecv < 0) {
         hERROR("failed to receive image");
     }
@@ -104,22 +66,26 @@ static int raytrace(std::string_view outpath, std::string_view name,
 
 #define ERRORSAVE hERROR("failed to save image")
 
-    fs::path outfspath = outpath;
-    fs::path outext = outfspath.extension();
+    fs::path outext = outpath.extension();
+#ifdef _MSC_VER
+    auto outpath_bstr = outpath.string();
+    const char* outpathb = outpath_bstr.c_str();
+#else
+    const char* outpathb = outpath.c_str();
+#endif
 
     if (outext == ".bmp") {
-        if (!write_bmp(outpath.data(), data.get(), resX, resY, 3)) { ERRORSAVE; }
+        if (!write_bmp(outpathb, data.get(), resX, resY, 3)) { ERRORSAVE; }
     } 
     else if (outext == ".png") {
-        if (!write_png(outpath.data(), data.get(), resX, resY, 3)) { ERRORSAVE; }
+        if (!write_png(outpathb, data.get(), resX, resY, 3)) { ERRORSAVE; }
     } 
     else {
-        auto p = outfspath.replace_extension(".bmp").string();
-        if (!write_bmp(p.c_str(), data.get(), resX, resY, 3)) { ERRORSAVE; }
+        if (!write_bmp(outpathb, data.get(), resX, resY, 3)) { ERRORSAVE; }
     }
 #undef ERRORSAVE
 
-    std::cout << "Saved image to " << outpath << "\n";
+    std::cout << "Saved image to " << outpathb << "\n";
     return 0;
 }
 
@@ -138,7 +104,7 @@ int main(int argc, char** argv)
         ("max-bv", "Max bounding volumes. Must be a power of 2.",
             cxxopts::value<uint>()->default_value("128"))
         ("ser-fmt", "Serialization format.",
-            cxxopts::value<std::string>()->default_value("nodup"), "{dup|nodup}")
+            cxxopts::value<std::string>()->default_value("dup"), "{dup|nodup}")
         ("b,tobin", "Serialize scene to binary format.")
         ("c,tohdr", "Serialize scene into C header.")      
         ("e,eswap", "Swap endianness.");
@@ -181,7 +147,7 @@ int main(int argc, char** argv)
     }
 
     fs::path inpath = args["in"].as<std::string>();
-    auto& outpath = args["out"].as<std::string>();
+    fs::path outpath = args["out"].as<std::string>();
 
     // ------------ Serialize or read serialized scene ------------ 
     BufWithSize<uint> Scbuf;
@@ -198,7 +164,7 @@ int main(int argc, char** argv)
         if (tobin && !eswap) {
             hERROR("scene is already in binary format");
         }
-        int e = from_bin(inpath, Scbuf);
+        int e = read_file(inpath, Scbuf);
         if (e) { return e; }
     }
 
@@ -219,10 +185,10 @@ int main(int argc, char** argv)
         if (rtargs.size() != 2) { 
             hERROR("missing rt options"); 
         }
-        err = raytrace(outpath, inpath.filename().string(), rtargs[0], rtargs[1], Scbuf);
+        err = raytrace(outpath, rtargs[0], rtargs[1], Scbuf);
     }
     else if (tobin) {
-        err = to_bin(outpath, Scbuf);
+        err = write_file(outpath, Scbuf);
     }
     else if (tohdr) { 
         err = to_hdr(outpath, Scbuf); 

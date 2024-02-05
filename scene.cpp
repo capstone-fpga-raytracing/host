@@ -62,21 +62,11 @@ static inline bool parsenum3(std::string_view& str, T& a, T& b, T& c)
 
 int Scene::read_scene(const fs::path& scpath, std::vector<fs::path>& objpaths)
 {
-    BufWithSize<char> scbuf;
-    {
-        scopedFILE scfile = SAFE_FOPEN(scpath.c_str(), "rb");
-        if (!scfile) {
-            hERROR("could not open scene file");
-        }   
-        scbuf.size = fs::file_size(scpath);
-        scbuf.ptr = std::make_unique<char[]>(scbuf.size);
-
-        // read the whole file. this is okay as a .scene file is always small
-        // and we always need to parse all of it
-        if (std::fread(scbuf.get(), 1, scbuf.size, scfile.get()) != scbuf.size) {
-            hERROR("could not read scene file");
-        }
-    }
+    // read the whole file. this is okay as a .scene file is always small
+    // and we always need to parse all of it
+    BufWithSize<char> scbuf;  
+    int e = read_file(scpath, scbuf);
+    if (e) { return e; }
 
     auto scdir = scpath.parent_path();
 

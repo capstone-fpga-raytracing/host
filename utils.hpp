@@ -3,8 +3,10 @@
 
 #include <cstdio>
 #include <cmath>
+#include <limits>
 #include <memory>
 #include <ranges>
+#include <iostream>
 #include <algorithm>
 #include <string_view>
 #include <filesystem>
@@ -13,17 +15,24 @@
 
 #define CONCAT(x, y) x##y
 
+// can't be called ERROR (windows already uses this name)
+#define hERROR(msg) \
+    do { \
+        std::cerr << "Error: " << msg << "\n"; \
+        return -1; \
+    } while (0)
+
+
 namespace ranges = std::ranges;
 namespace fs = std::filesystem;
 namespace chrono = std::chrono;
+
+static_assert(std::numeric_limits<unsigned>::digits == 32, "int is not 32-bit");
 
 using uint = unsigned int;
 using byte = unsigned char;
 
 using scopedFILE = std::unique_ptr<std::FILE, int(*)(std::FILE*)>;
-
-template <typename T>
-using scopedCPtr = std::unique_ptr<T, void(*)(void*)>;
 
 template <typename T>
 struct BufWithSize
@@ -37,12 +46,48 @@ struct BufWithSize
 // On Windows, fread() appears to be faster than ifstream.read()
 // https://gist.github.com/mayawarrier/7ed71f1f91a7f8588b7f8bd96a561892.
 //
-#define SAFE_AFOPEN(fname, mode) scopedFILE(std::fopen(fname, mode), std::fclose)
+#define SAFE_FOPENA(fname, mode) scopedFILE(std::fopen(fname, mode), std::fclose)
 #ifdef _MSC_VER
 #define SAFE_FOPEN(fname, mode) scopedFILE(::_wfopen(fname, CONCAT(L, mode)), std::fclose)
 #else
-#define SAFE_FOPEN(fname, mode) SAFE_AFOPEN(fname, mode)
+#define SAFE_FOPEN(fname, mode) SAFE_FOPENA(fname, mode)
 #endif
+
+template <typename T>
+inline int read_file(const fs::path& inpath, BufWithSize<T>& buf)
+{
+    scopedFILE f = SAFE_FOPEN(inpath.c_str(), "rb");
+    if (!f) { hERROR("could not open input file"); }
+
+    buf.size = fs::file_size(inpath) / sizeof(T);
+    buf.ptr = std::make_unique<T[]>(buf.size);
+
+    if (std::fread(buf.get(), sizeof(T), buf.size, f.get()) != buf.size) {
+        hERROR("could not read input file");
+    }
+    return 0;
+}
+
+template <typename T>
+inline int write_file(const fs::path& outpath, const T* ptr, size_t size)
+{
+    scopedFILE f = SAFE_FOPEN(outpath.c_str(), "wb");
+    if (!f) { hERROR("could not open output file"); }
+
+    if (std::fwrite(ptr, sizeof(T), size, f.get()) != size) {
+        hERROR("could not write output file");
+    }
+    return 0;
+}
+
+template <typename T>
+inline int write_file(const fs::path& outpath, const BufWithSize<T>& buf)
+{
+    return write_file(outpath, buf.ptr.get(), buf.size);
+}
+
+template <typename T>
+using scopedCPtr = std::unique_ptr<T, void(*)(void*)>;
 
 // Returns a managed ptr for malloc'd memory.
 template <typename T, typename Ptr>
