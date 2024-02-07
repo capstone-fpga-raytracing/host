@@ -22,12 +22,14 @@ constexpr bool textures_enabled()
 #endif
 }
 
-// 3d vector
+// 3d vector with all the C++
+// bells and whistles.
 struct vec3
 {
     vec3() = default;
 
-    constexpr vec3(float x, float y, float z)
+    constexpr vec3(float x, float y, float z) 
+        noexcept
     {
         v[0] = x;
         v[1] = y;
@@ -35,34 +37,31 @@ struct vec3
     }
 
     template <typename T>
-    constexpr vec3(std::array<T, 3> a)
+    constexpr vec3(std::array<T, 3> a) 
+        noexcept
     {
         v[0] = a[0];
         v[1] = a[1];
         v[2] = a[2];
     }
 
-    constexpr vec3(float val) : 
-        vec3(val, val, val) 
-    {}
+    float& x() noexcept { return v[0]; }
+    float& y() noexcept { return v[1]; }
+    float& z() noexcept { return v[2]; }
 
-    float& x() { return v[0]; }
-    float& y() { return v[1]; }
-    float& z() { return v[2]; }
+    float x() const noexcept { return v[0]; }
+    float y() const noexcept { return v[1]; }
+    float z() const noexcept { return v[2]; }
 
-    float x() const { return v[0]; }
-    float y() const { return v[1]; }
-    float z() const { return v[2]; }
+    float& operator[](int pos) noexcept { return v[pos]; }
+    const float& operator[](int pos) const noexcept { return v[pos]; }
 
-    float& operator[](int pos) { return v[pos]; }
-    const float& operator[](int pos) const { return v[pos]; }
-
-    float dot(const vec3& rhs) const 
+    float dot(const vec3& rhs) const noexcept
     {
         return x() * rhs.x() + y() * rhs.y() + z() * rhs.z();
     }
 
-    vec3 cross(const vec3& rhs) const
+    vec3 cross(const vec3& rhs) const noexcept
     {
         return {
             y() * rhs.z() - z() * rhs.y(),
@@ -70,24 +69,24 @@ struct vec3
             x() * rhs.y() - y() * rhs.x() };
     }
 
-    float norm() const 
+    float norm() const noexcept
     {
         return std::sqrt(x() * x() + y() * y() + z() * z());
     }
 
-    void normalize()
+    void normalize() noexcept
     {
         float n = norm();
         x() /= n; y() /= n; z() /= n;
     }
 
-    vec3 normalized() const
+    vec3 normalized() const noexcept
     {
         float n = norm();
         return { x() / n, y() / n, z() / n };
     }
 
-    vec3 cwiseMin(const vec3& rhs) const
+    vec3 cwiseMin(const vec3& rhs) const noexcept
     {
         return {
             std::min(v[0], rhs.v[0]),
@@ -95,7 +94,7 @@ struct vec3
             std::min(v[2], rhs.v[2]) };
     }
 
-    vec3 cwiseMax(const vec3& rhs) const
+    vec3 cwiseMax(const vec3& rhs) const noexcept
     {
         return {
             std::max(v[0], rhs.v[0]),
@@ -103,7 +102,26 @@ struct vec3
             std::max(v[2], rhs.v[2]) };
     }
 
-    int maxDim() const { return int(std::max_element(v, v + 3) - v); }
+    int maxDim() const noexcept { return int(std::max_element(v, v + 3) - v); }
+
+    vec3& operator+=(const vec3& rhs) noexcept
+    {
+        x() += rhs.x(); y() += rhs.y(); z() += rhs.z();
+        return *this;
+    }
+    vec3& operator-=(const vec3& rhs) noexcept
+    {
+        x() -= rhs.x(); y() -= rhs.y(); z() -= rhs.z();
+        return *this;
+    }
+
+    static constexpr vec3 infinity() noexcept {
+        return {
+            std::numeric_limits<float>::infinity(),
+            std::numeric_limits<float>::infinity(),
+            std::numeric_limits<float>::infinity()
+        };
+    }
 
     static constexpr uint nserial = 3;
 
@@ -118,20 +136,21 @@ private:
     float v[3];
 };
 
-inline vec3 operator+(const vec3& lhs, const vec3& rhs) noexcept
-{
-    return { lhs[0] + rhs[0], lhs[1] + rhs[1], lhs[2] + rhs[2]};
+inline vec3 operator+(const vec3& lhs, const vec3& rhs) noexcept { 
+    return { lhs[0] + rhs[0], lhs[1] + rhs[1], lhs[2] + rhs[2] };
 }
-inline vec3 operator-(const vec3& lhs, const vec3& rhs) noexcept
-{
+inline vec3 operator-(const vec3& lhs, const vec3& rhs) noexcept {
     return { lhs[0] - rhs[0], lhs[1] - rhs[1], lhs[2] - rhs[2] };
 }
-inline vec3 operator*(float sc, const vec3& rhs) noexcept
-{
-    return { sc * rhs[0], sc * rhs[1], sc * rhs[2] };
+inline vec3 operator*(float lhs, const vec3& rhs) noexcept {
+    return { lhs * rhs[0], lhs * rhs[1], lhs * rhs[2] };
 }
-inline vec3 operator*(const vec3& rhs, float sc) noexcept { return operator*(sc, rhs); }
-
+inline vec3 operator*(const vec3& lhs, float rhs) noexcept {
+    return operator*(rhs, lhs);
+}
+inline vec3 operator/(const vec3& lhs, float rhs) noexcept {
+    return { lhs[0] / rhs, lhs[1] / rhs, lhs[2] / rhs };
+}
 
 // Material
 struct mat
@@ -218,9 +237,9 @@ struct bbox
     vec3 cmin; // Min corner
     vec3 cmax; // Max corner
 
-    bbox() :
-        cmin(std::numeric_limits<float>::infinity()),
-        cmax(-std::numeric_limits<float>::infinity())
+    constexpr bbox() :
+        cmin(vec3::infinity()),
+        cmax(-1 * vec3::infinity())
     {}
 
     vec3 center() const { return 0.5 * (cmin + cmax); }

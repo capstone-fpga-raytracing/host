@@ -172,7 +172,7 @@ int Scene::read_scene(const fs::path& scpath, std::vector<fs::path>& objpaths)
         }
         else if (line.starts_with("light"))
         {
-            light lt{ 0 };
+            light lt{};
             bool has_pos = false, has_rgb = false;
 
             while (sv_getline(scstr, scpos, line))
@@ -444,7 +444,7 @@ int Scene::init_bvs(const uint max_bv)
 }
 
 Scene::Scene(const fs::path& scpath, const uint max_bv, serial_format ser_fmt) :
-    C({ 0 }), R(0, 0), m_serfmt(ser_fmt), m_ok(false)
+    C{}, R(0, 0), m_serfmt(ser_fmt), m_ok(false)
 {
     std::vector<fs::path> objpaths;
     m_ok = 
