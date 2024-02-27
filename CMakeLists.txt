@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.14)
-project(capstone_host)
+project(rthost)
 
-add_executable(host "main.cpp" "scene.cpp" "defs.hpp" "utils.hpp")
+add_executable(rthost "main.cpp" "scene.cpp" "defs.hpp" "utils.hpp")
 add_subdirectory(ext/IO)
 
 include(FetchContent)
@@ -16,13 +16,13 @@ FetchContent_Declare(rapidobj
     GIT_TAG         origin/master)
 FetchContent_MakeAvailable(rapidobj)
 
-target_link_libraries(host PRIVATE io)
-target_link_libraries(host PRIVATE cxxopts)
-target_link_libraries(host PRIVATE rapidobj::rapidobj)
+target_link_libraries(rthost PRIVATE io)
+target_link_libraries(rthost PRIVATE cxxopts)
+target_link_libraries(rthost PRIVATE rapidobj::rapidobj)
 
-set_property(TARGET host PROPERTY CXX_STANDARD 23)
-set_property(TARGET host PROPERTY CXX_STANDARD_REQUIRED)
-target_compile_definitions(host PRIVATE _CRT_SECURE_NO_WARNINGS)
+set_property(TARGET rthost PROPERTY CXX_STANDARD 23)
+set_property(TARGET rthost PROPERTY CXX_STANDARD_REQUIRED)
+target_compile_definitions(rthost PRIVATE _CRT_SECURE_NO_WARNINGS)
 
 if (NOT CMAKE_BUILD_TYPE)
     message(STATUS "No build type selected, default to Release")

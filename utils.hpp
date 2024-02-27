@@ -8,6 +8,7 @@
 #include <ranges>
 #include <iostream>
 #include <algorithm>
+#include <string>
 #include <string_view>
 #include <filesystem>
 #include <chrono>
@@ -15,24 +16,38 @@
 
 #define CONCAT(x, y) x##y
 
-// can't be called ERROR (windows already uses this name)
-#define hERROR(msg) \
-    do { \
-        std::cerr << "Error: " << msg << "\n"; \
-        return -1; \
-    } while (0)
-
-
 namespace ranges = std::ranges;
 namespace fs = std::filesystem;
 namespace chrono = std::chrono;
 
-static_assert(std::numeric_limits<unsigned>::digits == 32, "int is not 32-bit");
-
 using uint = unsigned int;
 using byte = unsigned char;
 
-using scopedFILE = std::unique_ptr<std::FILE, int(*)(std::FILE*)>;
+// serialization requirements
+static_assert(std::numeric_limits<uint>::digits == 32, "uint is not 32-bit");
+static_assert(std::numeric_limits<byte>::digits == 8, "byte is not 8-bit");
+
+template <typename ...Args>
+inline int ecERROR(int ec, const char* fmt, Args... args)
+{
+#ifdef __clang__
+_Pragma("clang diagnostic push")
+_Pragma("clang diagnostic ignored \"-Wformat-security\"")
+#endif
+    std::fputs("\033[1;31mError:\033[0m ", stderr);
+    std::fprintf(stderr, fmt, args...);
+    std::fputs("\n", stderr);
+    return ec;
+#ifdef __clang__
+_Pragma("clang diagnostic pop")
+#endif
+}
+
+template <typename ...Args>
+inline int mERROR(const char* fmt, Args... args)
+{
+    return ecERROR(-1, fmt, args...);
+}
 
 template <typename T>
 struct BufWithSize
@@ -41,6 +56,18 @@ struct BufWithSize
     size_t size;
     auto get() { return ptr.get(); }
 };
+
+using scopedFILE = std::unique_ptr<std::FILE, int(*)(std::FILE*)>;
+
+#ifdef _MSC_VER
+#define DECL_UTF8PATH_CSTR(path) \
+auto CONCAT(path, _bstr) = path.string(); \
+const char* CONCAT(p, path) = CONCAT(path, _bstr).c_str();
+
+#else
+#define DECL_UTF8PATH_CSTR(path) \
+const char* CONCAT(p, path) = path.c_str();
+#endif
 
 // On Linux, ifstream.read() and fread() are just as fast.
 // On Windows, fread() appears to be faster than ifstream.read()
@@ -57,13 +84,18 @@ template <typename T>
 inline int read_file(const fs::path& inpath, BufWithSize<T>& buf)
 {
     scopedFILE f = SAFE_FOPEN(inpath.c_str(), "rb");
-    if (!f) { hERROR("could not open input file"); }
+    if (!f) { return mERROR("could not open input file"); }
 
-    buf.size = fs::file_size(inpath) / sizeof(T);
+    auto fsize = fs::file_size(inpath);
+    if (fsize % sizeof(T) != 0) {
+        return mERROR("input file is not %ubyte-aligned", uint(sizeof(T)));
+    }
+
+    buf.size = fsize / sizeof(T);
     buf.ptr = std::make_unique<T[]>(buf.size);
 
     if (std::fread(buf.get(), sizeof(T), buf.size, f.get()) != buf.size) {
-        hERROR("could not read input file");
+        return mERROR("could not read file");
     }
     return 0;
 }
@@ -72,10 +104,10 @@ template <typename T>
 inline int write_file(const fs::path& outpath, const T* ptr, size_t size)
 {
     scopedFILE f = SAFE_FOPEN(outpath.c_str(), "wb");
-    if (!f) { hERROR("could not open output file"); }
+    if (!f) { return mERROR("could not open output file"); }
 
     if (std::fwrite(ptr, sizeof(T), size, f.get()) != size) {
-        hERROR("could not write output file");
+        return mERROR("could not write file");
     }
     return 0;
 }
@@ -98,16 +130,24 @@ inline std::string_view rtrim(std::string_view str)
     return { str.data(), str.find_last_not_of(" \t\n\r\f\v") + 1 };
 }
 
-inline bool sv_getline(std::string_view str, size_t& pos, std::string_view& line)
+inline bool sv_getline(std::string_view& str, std::string_view& line)
 {
-    if (pos >= str.size()) {
+    if (str.size() == 0) {
         return false;
     }
-    size_t i = str.find('\n', pos);
-    size_t lend = (i != str.npos) ? i : str.size();
 
-    line = rtrim({ &str[pos], lend - pos });
-    pos = lend + 1;
+    size_t i = str.find('\n');
+    size_t endline, nline;
+    if (i != str.npos) {
+        endline = i;
+        nline = i + 1; // skip '\n'
+    } else {
+        endline = str.size();
+        nline = str.size();
+    }
+
+    line = rtrim({ str.data(), endline });
+    str.remove_prefix(nline);
     return true;
 }
 
@@ -119,7 +159,7 @@ inline uint to_fixedpt(float val)
 constexpr float from_fixedpt(uint val)
 {
     // int(val) interprets the bits of val as a signed number, 
-    // which only works from c++20 onwards
+    // which only officially works from c++20 onwards
     return float(int(val)) / (1 << 16);
 }
 

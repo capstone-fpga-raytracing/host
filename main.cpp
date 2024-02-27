@@ -11,6 +11,22 @@
 
 #include "io.h"
 
+// using Intel's DE1 Linux build
+#define RT_DEFAULT_HOST "de1soclinux"
+#define RT_DEFAULT_PORT "50000"
+#define RT_DEFAULTARGS RT_DEFAULT_HOST "," RT_DEFAULT_PORT
+
+#ifdef _WIN32
+static bool tcp_init = false;
+
+// no multithreading, so this is okay.
+static bool tcp_win32_initonce() {
+    if (!tcp_init) {
+        tcp_init = (TCP_win32_init() == 0);
+    }
+    return tcp_init;
+}
+#endif
 
 static int to_hdr(const fs::path& outpath, BufWithSize<uint>& buf)
 {
@@ -40,58 +56,60 @@ static int to_hdr(const fs::path& outpath, BufWithSize<uint>& buf)
     return write_file(outpath, out.c_str(), out.length());
 }
 
-static int raytrace(const fs::path& outpath, 
-    std::string_view ipaddr, std::string_view port, BufWithSize<uint>& buf)
+static int raytrace(const fs::path& outpath, std::string_view host,
+    std::string_view port, BufWithSize<uint>& buf, bool verbose = false)
 {
-    std::cout << "Sending scene to FPGA...\n";
+#ifdef _WIN32
+    if (!tcp_win32_initonce()) {
+        return mERROR("failed to initialize TCP");
+    }
+#endif 
+    std::printf("Sending scene to FPGA...\n");
 
     const uint nbytes = uint(buf.size * 4);
-    if (TCP_send((byte*)buf.get(), nbytes, ipaddr.data(), port.data()) != nbytes) {
-        hERROR("failed to send scene");
+    if (TCP_send((char*)buf.get(), nbytes, host.data(), port.data()) != nbytes) {
+        return mERROR("failed to send scene");
     }
 
-    std::cout << "Waiting for image...\n";
-
-    byte* pdata;
-    int nrecv = TCP_recv(&pdata, port.data(), true);
-    auto data = scoped_cptr<byte[]>(pdata);
-
+    std::printf("Waiting for image...\n");
     uint resX = buf.ptr[1], resY = buf.ptr[2]; // nasty
+
+    char* pdata;
+    int nrecv = TCP_recv(&pdata, port.data(), true);
+
+    auto data = scoped_cptr<char[]>(pdata);
+    uint data_size = resX * resY * 3;
+
     if (nrecv < 0) {
-        hERROR("failed to receive image");
+        return mERROR("failed to receive image");
     }
-    else if (nrecv != (resX * resY * 3)) {
-        hERROR("received image dimensions are incorrect");
+    else if (nrecv != data_size) {
+        return mERROR("received %d bytes, expected %u", nrecv, data_size);
     }
 
-#define ERRORSAVE hERROR("failed to save image")
-
+    DECL_UTF8PATH_CSTR(outpath)
     fs::path outext = outpath.extension();
-#ifdef _MSC_VER
-    auto outpath_bstr = outpath.string();
-    const char* outpathb = outpath_bstr.c_str();
-#else
-    const char* outpathb = outpath.c_str();
-#endif
 
+    bool wr_err = false;
     if (outext == ".bmp") {
-        if (!write_bmp(outpathb, data.get(), resX, resY, 3)) { ERRORSAVE; }
+        wr_err = !write_bmp(poutpath, data.get(), resX, resY, 3);
     } 
     else if (outext == ".png") {
-        if (!write_png(outpathb, data.get(), resX, resY, 3)) { ERRORSAVE; }
-    } 
-    else {
-        if (!write_bmp(outpathb, data.get(), resX, resY, 3)) { ERRORSAVE; }
+        wr_err = !write_png(poutpath, data.get(), resX, resY, 3);
     }
-#undef ERRORSAVE
+    else { wr_err = write_file(outpath, data.get(), data_size); }
 
-    std::cout << "Saved image to " << outpathb << "\n";
+    if (wr_err) {
+        return mERROR("failed to save image");
+    }
+
+    std::printf("Saved image to %s\n", poutpath);
     return 0;
 }
 
 static void BV_report(const Scene& sc) 
 {
-    // this is viewing_ray from the reference code, optimized
+    // this is viewing_ray from raytracing-basic, optimized
     // and with stretching issue fixed
     float world_du = sc.C.width / sc.R.first;
     float world_dv = sc.C.height / sc.R.second;
@@ -103,7 +121,7 @@ static void BV_report(const Scene& sc)
     const vec3 base_dir = base_u * sc.C.u + base_v * sc.C.v - sc.C.focal_len * sc.C.w;
     const vec3 incr_diru = aspratio * world_du * sc.C.u;
     const vec3 incr_dirv = -world_dv * sc.C.v;
-  
+
     // camera ray
     vec3 rorig = sc.C.eye, rdir = base_dir;
 
@@ -127,7 +145,7 @@ static void BV_report(const Scene& sc)
                     }
                     float t1 = (bb.cmin[k] - rorig[k]) / rdir[k];
                     float t2 = (bb.cmax[k] - rorig[k]) / rdir[k];
-
+                    
                     if (rdir[k] > 0) {
                         t_entry = std::max(t_entry, t1);
                         t_exit = std::min(t_exit, t2);
@@ -144,7 +162,7 @@ static void BV_report(const Scene& sc)
             }
             rdir += incr_diru;
         }
-        rdir -= (sc.R.first * incr_diru); // reset
+        rdir -= (float(sc.R.first) * incr_diru); // reset
         rdir += incr_dirv;
     }
 
@@ -153,36 +171,35 @@ static void BV_report(const Scene& sc)
 
     std::cout << "----------- BV report -----------\n";
     std::cout << "Num BVs: " << sc.BV.size() << "\n";
-    std::cout << "Percent tris eliminated by bvs: " << 100 * (1 - candavg) << "%\n";
-    std::cout << "Num candidate tris per ray: " << float(ncandtris) / nrays << "\n";
+    std::cout << "Percent tris eliminated: " << 100 * (1 - candavg) << "%\n";
+    std::cout << "Avg candidate tris per ray: " << float(ncandtris) / nrays << "\n";
     std::cout << "---------------------------------\n";
 }
 
 int main(int argc, char** argv)
-{
+{   
     // cxxopts is slow but is also very convenient.
-    cxxopts::Options opts("host", "FPGA raytracer.");
+    cxxopts::Options opts("rthost", "FPGA raytracer host.");
     opts.add_options()
         ("h,help", "Show usage.")
-        ("i,in", "Input scene (.scene or .bin).", cxxopts::value<std::string>(), "<file>")
-        ("o,out", "Output file (.bin, .bmp or .png).", cxxopts::value<std::string>(), "<file>")
-        ("rt", "Raytrace scene on FPGA. Faster if scene is in binary format.", 
-            cxxopts::value<std::vector<std::string>>(), "<ipaddr>,<port>")
-        ("max-bv", "Max bounding volumes. Must be a power of 2.",
-            cxxopts::value<uint>()->default_value("128"), "<uint>")
-        ("bv-report", "Report on efficiency of BVs. Input must be a .scene file.")
+        ("i,in", "Input file (.scene or .bin).", cxxopts::value<std::string>(), "<file>")
+        ("o,out", "Output file (.bmp, .png, or .bin).", cxxopts::value<std::string>(), "<file>")
+        ("rt", "Raytrace scene on FPGA. Faster if scene is in binary format.",
+            cxxopts::value<std::string>()->implicit_value(RT_DEFAULTARGS), "<host>,<port>")
+        ("max-bv", "Max bounding volumes. Must be a power of 2.", cxxopts::value<uint>()->default_value("128"), "<uint>")
+        ("bv-report", "Report efficiency of bounding volumes (takes a few seconds).")
+        ("ser-fmt", "Serialization format.", cxxopts::value<std::string>()->default_value("dup"), "<dup|nodup>")
         ("b,tobin", "Convert scene to binary format.")
         ("c,tohdr", "Convert scene to C header.")
-        ("ser-fmt", "Serialization format.",
-            cxxopts::value<std::string>()->default_value("dup"), "{dup|nodup}")
-        ("e,eswap", "Swap endianness.");
+        ("e,eswap", "Swap endianness.")
+        ("v,verbose", "Verbose mode.");
         
     cxxopts::ParseResult args;
     try {
         args = opts.parse(argc, argv);
     }
     catch (std::exception& e) {
-        hERROR(e.what());
+        return mERROR(e.what());
     }
    
     if (args["help"].as<bool>()) {
@@ -191,9 +208,9 @@ int main(int argc, char** argv)
     }
 
     if (args["in"].count() == 0) {
-        hERROR("no input file");
+        return mERROR("no input file");
     }
-    
+
     bool tobin = args["tobin"].count() != 0;
     bool tohdr = args["tohdr"].count() != 0;
     bool tofpga = args["rt"].count() != 0;
@@ -201,16 +218,22 @@ int main(int argc, char** argv)
     
     int tototal = int(tobin) + int(tohdr) + int(tofpga);
     if (tototal == 0) {
-        if (!bv_report) { hERROR("nothing to do"); }
+        if (!bv_report) { return mERROR("nothing to do"); }
     }
     else if (tototal > 1) {
-        hERROR("more than one target");
+        return mERROR("more than one target");
     }
 
-    if (tototal == 1 && bv_report) {
-        std::cout << 
-            "Warning: BV report takes a few seconds to generate. " 
-            "Timing report will not be accurate.\n";
+    bool eswap = args["eswap"].as<bool>();
+    if (eswap && tohdr) {
+        return mERROR("cannot apply eswap when target " 
+            "is C header (makes no sense)");
+    }
+
+    if (tototal != 0 && bv_report) {
+        std::cout <<
+            "BV report takes a few seconds to generate. "
+            "Timing will not be accurate.\n";
     }
 
     auto& serfmtstr = args["ser-fmt"].as<std::string>();
@@ -220,28 +243,49 @@ int main(int argc, char** argv)
         serial_format::Duplicate : serial_format::NoDuplicate;
 
     if (!dup && !nodup) {
-        hERROR("invalid serialization format");
+        return mERROR("invalid serialization format");
     }
-
-    bool eswap = args["eswap"].as<bool>();
-    if (eswap && tohdr) {
-        std::cout << "Ignored --eswap because of --tohdr.\n";
-        eswap = false;
-    }
-
+   
     fs::path inpath = args["in"].as<std::string>();
+
     fs::path outpath;
-    if (args["out"].count() != 0) {
+    bool has_outpath = args["out"].count() != 0;
+    if (tototal != 0 && !has_outpath) {
+        return mERROR("missing output file");
+    }
+    if (has_outpath) {
         outpath = args["out"].as<std::string>();
     }
 
+    std::string rthost, rtport;
+    if (tofpga) {
+        auto& rtargs = args["rt"].as<std::string>();
+
+        size_t sepoff = rtargs.find(',');
+        if (sepoff == rtargs.npos) {
+            rthost = rtargs;
+            rtport = RT_DEFAULT_PORT;
+        } 
+        else if (sepoff == 0) {
+            return mERROR("missing FPGA hostname/ipaddr");
+        }
+        else {
+            rthost = rtargs.substr(0, sepoff);
+            rtport = rtargs.substr(sepoff + 1);
+        }
+    }
+
+    bool verbose = args["verbose"].count() != 0;
+    uint max_bv = args["max-bv"].as<uint>();
+
+    // the real work begins
     auto tbeg = chrono::high_resolution_clock::now();
 
     // ------------ Serialize or read serialized scene ------------ 
     BufWithSize<uint> Scbuf;
     if (inpath.extension() == ".scene")
     {
-        Scene scene(inpath, args["max-bv"].as<uint>(), serfmt);
+        Scene scene(inpath, max_bv, serfmt, verbose);
         if (!scene) { return EXIT_FAILURE; }
 
         Scbuf.size = scene.nserial();
@@ -251,8 +295,11 @@ int main(int argc, char** argv)
         if (bv_report) { BV_report(scene); }
     } 
     else {
+        if (bv_report) {
+            return mERROR("bv report expects .scene file");
+        }
         if (tobin && !eswap) {
-            hERROR("scene is already in binary format");
+            return mERROR("scene is already in binary format");
         }
         int e = read_file(inpath, Scbuf);
         if (e) { return e; }
@@ -266,23 +313,24 @@ int main(int argc, char** argv)
 
     // ------------ Do output ------------ 
     int err = 0;
-    if (tofpga)
-    {
-        auto& rtargs = args["rt"].as<std::vector<std::string>>();
-        if (rtargs.size() != 2) { 
-            hERROR("missing rt options"); 
+    if (tofpga) {
+        err = raytrace(outpath, rthost, rtport, Scbuf, verbose);
+    }
+    else {
+        if (verbose) {
+            DECL_UTF8PATH_CSTR(outpath)
+            std::printf("Writing to file %s\n", poutpath);
         }
-        err = raytrace(outpath, rtargs[0], rtargs[1], Scbuf);
-    }
-    else if (tobin) {
-        err = write_file(outpath, Scbuf);
-    }
-    else if (tohdr) { 
-        err = to_hdr(outpath, Scbuf); 
-    }
-    else if (!bv_report) { 
-        assert(false && "no output");
-    }
+
+        if (tobin) {
+            err = write_file(outpath, Scbuf);
+        } else if (tohdr) {
+            err = to_hdr(outpath, Scbuf);
+        }
+        else if (!bv_report) {
+            assert(false && "no output");
+        }
+    } 
     if (err) { return err; }
 
     auto tend = chrono::high_resolution_clock::now();

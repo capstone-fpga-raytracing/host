@@ -1,7 +1,7 @@
 obj
 test.obj
 
-render
+scene
 res 320 240
 
 camera
@@ -10,10 +10,10 @@ uvw 1 1 0 -1 1 1.41421356 1 -1 1.41421356
 focal_len 5
 proj_size 3.6 2.7
 
-light // yellow
+light
 pos 3.6746 2.0055 3.1325
 rgb 1 1 0
 
-light // red
+light
 pos 1.5699 0.87056 3.1325
 rgb 1 0 0

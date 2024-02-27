@@ -152,6 +152,11 @@ inline vec3 operator/(const vec3& lhs, float rhs) noexcept {
     return { lhs[0] / rhs, lhs[1] / rhs, lhs[2] / rhs };
 }
 
+inline std::ostream& operator<<(std::ostream& os, const vec3& vec) {
+    os << "(" << vec.x() << ", " << vec.y() << ", " << vec.z() << ")";
+    return os;
+}
+
 // Material
 struct mat
 {
@@ -212,7 +217,7 @@ struct light
 struct camera
 {
     vec3 eye; // position
-    vec3 u, v, w; // rotation axes (-w is viewing direction)
+    vec3 u, v, w; // rotation axes (columns of rotation matrix)
     float focal_len; // focal length (distance to img plane)
     float width, height; // projected img size (in world space)
 
@@ -237,7 +242,7 @@ struct bbox
     vec3 cmin; // Min corner
     vec3 cmax; // Max corner
 
-    constexpr bbox() :
+    bbox() :
         cmin(vec3::infinity()),
         cmax(-1 * vec3::infinity())
     {}
@@ -293,7 +298,8 @@ struct Scene
 {
     // max_bv must be a power of 2.
     Scene(const fs::path& scene_path, const uint max_bv, 
-        serial_format ser_fmt = serial_format::Duplicate);
+        serial_format ser_fmt = serial_format::Duplicate, 
+        bool verbose = false);
 
     camera C; // camera
     std::pair<uint, uint> R; // resolution
@@ -309,6 +315,8 @@ struct Scene
     std::vector<tri> F; // triangles
     std::vector<bv> BV; // bounding volumes
 
+    const std::string& name() const { return m_scname; }
+
     bool ok() const { return m_ok; }
     operator bool() const { return ok(); }
 
@@ -316,14 +324,16 @@ struct Scene
     void serialize(uint* buf) const;
 
 private:
-    int read_scene(const fs::path& scenepath, std::vector<fs::path>& out_objpaths);
+    int read_scenefile(const fs::path& scenepath, std::vector<fs::path>& out_objpaths);
     int read_objs(const std::vector<fs::path>& objpaths);
 
     int init_bvs(const uint max_bv);
     void gather_bvs(tri* tris_beg, tri* tris_end, uint depth = 0);
 
 private:
+    std::string m_scname;
     serial_format m_serfmt;
+    bool m_verbose;
     uint m_bv_stop_depth;
     bool m_ok;
 };
