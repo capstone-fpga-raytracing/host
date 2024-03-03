@@ -28,63 +28,54 @@ static bool tcp_win32_initonce() {
 }
 #endif
 
-static int to_hdr(const fs::path& outpath, BufWithSize<uint>& buf)
-{
-    std::string out = "static const int bin[] = {";
-
-    char strbuf[10] = { '0', 'x' };
-    char* const begin = strbuf + 2;
-
-    for (uint i = 0; i < buf.size; ++i)
-    {
-        if (i % 12 == 0) {
-            out.append("\n    ");
-        }
-        auto ret = std::to_chars(begin, std::end(strbuf), buf.ptr[i], 16);
-
-        ptrdiff_t nchars = ret.ptr - begin;
-        std::memmove(std::end(strbuf) - nchars, begin, nchars);
-        std::memset(begin, '0', 8 - nchars);
-
-        out.append(strbuf, 10);
-        if (i != buf.size - 1) {
-            out.append(", ");
-        }
-    }
-    out.append("\n};\n");
-
-    return write_file(outpath, out.c_str(), out.length());
-}
-
-static int raytrace(const fs::path& outpath, std::string_view host,
-    std::string_view port, BufWithSize<uint>& buf, bool verbose = false)
+static int raytrace(const fs::path& outpath, std::string_view host, std::string_view port, 
+    std::pair<uint, uint> resn, BufWithSize<uint>& buf, bool verbose = false)
 {
 #ifdef _WIN32
     if (!tcp_win32_initonce()) {
         return mERROR("failed to initialize TCP");
     }
 #endif 
-    std::printf("Sending scene to FPGA...\n");
+#define DASHES "----------------------------\n"
 
-    const uint nbytes = uint(buf.size * 4);
-    if (TCP_send((char*)buf.get(), nbytes, host.data(), port.data()) != nbytes) {
-        return mERROR("failed to send scene");
+    const uint nbytes_sc = uint(buf.size * 4);
+    const uint nbytes_img = resn.first * resn.second * 3;
+
+    if (verbose) {
+        std::printf("Sending scene to FPGA...\n");
+        std::printf(DASHES);
+    }
+    
+    socket_t socket = TCP_connect2(host.data(), port.data(), verbose);
+    if (socket == INV_SOCKET) {
+        return -1;
+    }
+    if (TCP_send2(socket, (char*)buf.get(), nbytes_sc, verbose) != nbytes_sc) {
+        return -1;
     }
 
-    std::printf("Waiting for image...\n");
-    uint resX = buf.ptr[1], resY = buf.ptr[2]; // nasty
-
+    if (verbose) {
+        std::printf(DASHES);
+        std::printf("Waiting for image...\n");
+        std::printf(DASHES);
+    }
+    
     char* pdata;
-    int nrecv = TCP_recv(&pdata, port.data(), true);
-
+    int nrecv = TCP_recv2(socket, &pdata, verbose);
     auto data = scoped_cptr<char[]>(pdata);
-    uint data_size = resX * resY * 3;
-
     if (nrecv < 0) {
+        if (verbose) { std::printf(DASHES); }
         return mERROR("failed to receive image");
     }
-    else if (nrecv != data_size) {
-        return mERROR("received %d bytes, expected %u", nrecv, data_size);
+    else if (nrecv != nbytes_img) {
+        TCP_close(socket);
+        if (verbose) { std::printf(DASHES); }
+        return mERROR("received %d bytes, expected %u", nrecv, nbytes_img);
+    }
+
+    TCP_close(socket);
+    if (verbose) {
+        std::printf(DASHES);
     }
 
     DECL_UTF8PATH_CSTR(outpath)
@@ -92,19 +83,22 @@ static int raytrace(const fs::path& outpath, std::string_view host,
 
     bool wr_err = false;
     if (outext == ".bmp") {
-        wr_err = !write_bmp(poutpath, data.get(), resX, resY, 3);
+        wr_err = !write_bmp(poutpath, data.get(), resn.first, resn.second, 3);
     } 
     else if (outext == ".png") {
-        wr_err = !write_png(poutpath, data.get(), resX, resY, 3);
+        wr_err = !write_png(poutpath, data.get(), resn.first, resn.second, 3);
     }
-    else { wr_err = write_file(outpath, data.get(), data_size); }
+    else { wr_err = write_file(outpath, data.get(), nbytes_img); }
 
     if (wr_err) {
         return mERROR("failed to save image");
     }
-
-    std::printf("Saved image to %s\n", poutpath);
+    if (verbose) {
+        std::printf("Saved image to %s\n", poutpath);
+    }
     return 0;
+
+#undef DASHES
 }
 
 static void BV_report(const Scene& sc) 
@@ -174,6 +168,34 @@ static void BV_report(const Scene& sc)
     std::cout << "Percent tris eliminated: " << 100 * (1 - candavg) << "%\n";
     std::cout << "Avg candidate tris per ray: " << float(ncandtris) / nrays << "\n";
     std::cout << "---------------------------------\n";
+}
+
+static int to_hdr(const fs::path& outpath, BufWithSize<uint>& buf)
+{
+    std::string out = "static const int bin[] = {";
+
+    char strbuf[10] = { '0', 'x' };
+    char* const begin = strbuf + 2;
+
+    for (uint i = 0; i < buf.size; ++i)
+    {
+        if (i % 12 == 0) {
+            out.append("\n    ");
+        }
+        auto ret = std::to_chars(begin, std::end(strbuf), buf.ptr[i], 16);
+
+        ptrdiff_t nchars = ret.ptr - begin;
+        std::memmove(std::end(strbuf) - nchars, begin, nchars);
+        std::memset(begin, '0', 8 - nchars);
+
+        out.append(strbuf, 10);
+        if (i != buf.size - 1) {
+            out.append(", ");
+        }
+    }
+    out.append("\n};\n");
+
+    return write_file(outpath, out.c_str(), out.length());
 }
 
 int main(int argc, char** argv)
@@ -283,6 +305,7 @@ int main(int argc, char** argv)
 
     // ------------ Serialize or read serialized scene ------------ 
     BufWithSize<uint> Scbuf;
+    std::pair<uint, uint> Scres;
     if (inpath.extension() == ".scene")
     {
         Scene scene(inpath, max_bv, serfmt, verbose);
@@ -291,6 +314,7 @@ int main(int argc, char** argv)
         Scbuf.size = scene.nserial();
         Scbuf.ptr = std::make_unique<uint[]>(Scbuf.size);
         scene.serialize(Scbuf.get());
+        Scres = scene.R;
 
         if (bv_report) { BV_report(scene); }
     } 
@@ -303,6 +327,11 @@ int main(int argc, char** argv)
         }
         int e = read_file(inpath, Scbuf);
         if (e) { return e; }
+
+        // todo: may not always work, depends on endianness.
+        // An endian swap may be necessary even if not specified on cmdline
+        Scres.first = Scbuf.ptr[1];
+        Scres.second = Scbuf.ptr[2];
     }
 
     if (eswap) {
@@ -314,7 +343,7 @@ int main(int argc, char** argv)
     // ------------ Do output ------------ 
     int err = 0;
     if (tofpga) {
-        err = raytrace(outpath, rthost, rtport, Scbuf, verbose);
+        err = raytrace(outpath, rthost, rtport, Scres, Scbuf, verbose);
     }
     else {
         if (verbose) {
@@ -333,10 +362,12 @@ int main(int argc, char** argv)
     } 
     if (err) { return err; }
 
-    auto tend = chrono::high_resolution_clock::now();
-    std::cout << "Completed in ";
-    print_duration(std::cout, tend - tbeg);
-    std::cout << ".\n";
+    if (verbose) {
+        auto tend = chrono::high_resolution_clock::now();
+        std::cout << "Completed in ";
+        print_duration(std::cout, tend - tbeg);
+        std::cout << ".\n";
+    }
 
     return 0;
 }

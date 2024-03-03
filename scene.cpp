@@ -111,7 +111,6 @@ int Scene::read_scenefile(const fs::path& scpath, std::vector<fs::path>& objpath
     bool has_scene = false, 
         has_cam = false;
 
-    // not so great manual file parsing code
     while (sv_getline(scstr, line))
     {
         lineno++;
@@ -263,6 +262,8 @@ int Scene::read_scenefile(const fs::path& scpath, std::vector<fs::path>& objpath
         std::printf("%s: found %u light(s)\n", pscname, uint(L.size()));
     }
     return 0;
+
+#undef scERROR
 }
 
 int Scene::read_objs(const std::vector<fs::path>& objpaths)
