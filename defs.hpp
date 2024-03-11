@@ -320,6 +320,9 @@ struct Scene
     bool ok() const { return m_ok; }
     operator bool() const { return ok(); }
 
+    // magic number used for serialization endianness check
+    static constexpr uint MAGIC = 0x5343454E;
+
     uint nserial() const;
     void serialize(uint* buf) const;
 

@@ -247,20 +247,18 @@ int Scene::read_scenefile(const fs::path& scpath, std::vector<fs::path>& objpath
     if (objpaths.empty()) {
         return mERROR("%s: no obj files found\n", pscname);
     } else if (!has_cam) {
-        return mERROR("%s no camera found\n", pscname);
+        return mERROR("%s: no camera found\n", pscname);
     } else if (L.empty()) {
         return mERROR("%s: no lights found\n", pscname);
-    }
-
-    if (!has_scene) {
-        std::printf("%s: no resolution provided, default to 1920x1080\n", pscname);
-        R = { 1920, 1080 };
+    } else if (!has_scene) {
+        return mERROR("%s: no resolution found\n", pscname);
     }
 
     if (m_verbose) {
-        std::printf("%s: found %u obj file(s)\n", pscname, uint(objpaths.size()));
-        std::printf("%s: found %u light(s)\n", pscname, uint(L.size()));
+        std::printf("%s: using resolution %ux%u\n", pscname, R.first, R.second);
+        std::printf("%s: found %zu obj file(s)\n", pscname, objpaths.size());
     }
+    std::printf("%s: found %zu light(s)\n", pscname, L.size());
     return 0;
 
 #undef scERROR
@@ -317,9 +315,8 @@ int Scene::read_objs(const std::vector<fs::path>& objpaths)
             m.ks = mobj.specular;
             m.ns = mobj.shininess;
 
-            // get roughness from shininess by solving
-            // 1000-2000r+1000r^{2} = ns, this is what blender appears to use.
-            // then approximate refl as 1-r (stupid but should work).
+            // solve 1000-2000r+1000r^{2} = ns to get roughness (blender's formula).
+            // then approximate refl as 1-roughness (stupid but should work).
             // this simplifies to sqrt(ns/1000)
             assert(m.ns >= 0);
             float ref_ns = m.ns > 1000 ? 1 : m.ns / 1000;
@@ -402,22 +399,21 @@ int Scene::read_objs(const std::vector<fs::path>& objpaths)
         }
     }
 
-    if (m_verbose) {
-        std::printf("%s: found %zu triangle(s), %zu vertices, %zu normal(s)\n", 
-            pscname, F.size(), V.size(), NV.size());
+    std::printf("%s: found %zu triangle(s), %zu vertices, %zu normal(s)\n",
+        pscname, F.size(), V.size(), NV.size());
 #if ENABLE_TEXTURES
-        std::printf("%s: found %zu UV(s), %zu material(s)\n", 
-            pscname, UV.size(), M.size());
+    std::printf("%s: found %zu UV(s), %zu material(s)\n",
+        pscname, UV.size(), M.size());
 #else
-        std::printf("%s: found %zu material(s)\n", pscname, M.size());
+    std::printf("%s: found %zu material(s)\n", pscname, M.size());
 #endif
-    }
 
     // --------------- Fix bad faces ---------------  
     if (badFidx.size() != 0)
     {
         if (m_verbose) {
-            std::printf("%s: detected %zu bad faces\n", pscname, badFidx.size());
+            std::printf("%s: detected %zu faces "
+                "with missing information\n", pscname, badFidx.size());
         }
 
         int default_matid = -1;
@@ -476,20 +472,23 @@ int Scene::read_objs(const std::vector<fs::path>& objpaths)
 
         if (m_verbose) {
             if (oldNVsize != NV.size()) {
-                std::printf("%s: added %zu missing normals\n", pscname, NV.size() - oldNVsize);
+                std::printf("%s: fixed %zu missing normal IDs\n", 
+                    pscname, NV.size() - oldNVsize);
             }
             if (nmissingmat != 0) {
-                std::printf("%s: fixed %zu faces with missing materials\n", pscname, nmissingmat);
+                std::printf("%s: fixed %zu missing material IDs\n", 
+                    pscname, nmissingmat);
             }
 #if ENABLE_TEXTURES
             if (nmissinguv != 0) {
-                std::printf("%s: fixed %zu faces with missing UVs\n", pscname, nmissinguv);
+                std::printf("%s: fixed %zu missing UV IDs\n", 
+                    pscname, nmissinguv);
             }
 #endif
         }
     }
     if (F.empty() || V.empty()) {
-        return mERROR("%s: no faces or vertices found\n", m_scname.c_str());
+        return mERROR("%s: no faces or vertices found\n", pscname);
     }
     return 0;
 }
@@ -551,11 +550,11 @@ Scene::Scene(const fs::path& scpath, const uint max_bv, serial_format ser_fmt, b
         init_bvs(max_bv) == 0;
 }
 
-// nserial, resX, resY, numL, numBV, camOff, BVoff, 
+// magic, resX, resY, numL, numBV, camOff, BVoff, 
 // Voff, NVoff, Foff, NFoff, MFoff, Moff, Loff, optional: UVoff, UFoff
 static constexpr int nhdr_noduplicate = 14 + 2 * textures_enabled();
 
-// nserial, resX, resY, numL, numBV, camOff, BVoff, 
+// magic, resX, resY, numL, numBV, camOff, BVoff, 
 // FVoff, FNVoff, FMoff, Loff, optional: FUVoff
 static constexpr int nhdr_duplicate = 11 + textures_enabled();
 
@@ -594,7 +593,7 @@ void Scene::serialize(uint* p) const
             m_serfmt == serial_format::Duplicate ? "duplicate" : "no duplicate");
     }
 
-    *p++ = nserial();
+    *p++ = MAGIC;
     *p++ = R.first;
     *p++ = R.second;
     *p++ = uint(L.size());

@@ -41,10 +41,8 @@ static int raytrace(const fs::path& outpath, std::string_view host, std::string_
     const uint nbytes_sc = uint(buf.size * 4);
     const uint nbytes_img = resn.first * resn.second * 3;
 
-    if (verbose) {
-        std::printf("Sending scene to FPGA...\n");
-        std::printf(DASHES);
-    }
+    std::printf("Sending scene to FPGA...\n");
+    if (verbose) { std::printf(DASHES); }
     
     socket_t socket = TCP_connect2(host.data(), port.data(), verbose);
     if (socket == INV_SOCKET) {
@@ -54,11 +52,9 @@ static int raytrace(const fs::path& outpath, std::string_view host, std::string_
         return -1;
     }
 
-    if (verbose) {
-        std::printf(DASHES);
-        std::printf("Waiting for image...\n");
-        std::printf(DASHES);
-    }
+    if (verbose) { std::printf(DASHES); }
+    std::printf("Waiting for image...\n");
+    if (verbose) { std::printf(DASHES); }
     
     char* pdata;
     int nrecv = TCP_recv2(socket, &pdata, verbose);
@@ -74,9 +70,7 @@ static int raytrace(const fs::path& outpath, std::string_view host, std::string_
     }
 
     TCP_close(socket);
-    if (verbose) {
-        std::printf(DASHES);
-    }
+    if (verbose) { std::printf(DASHES); }
 
     DECL_UTF8PATH_CSTR(outpath)
     fs::path outext = outpath.extension();
@@ -84,18 +78,16 @@ static int raytrace(const fs::path& outpath, std::string_view host, std::string_
     bool wr_err = false;
     if (outext == ".bmp") {
         wr_err = !write_bmp(poutpath, data.get(), resn.first, resn.second, 3);
-    } 
-    else if (outext == ".png") {
+    } else if (outext == ".png") {
         wr_err = !write_png(poutpath, data.get(), resn.first, resn.second, 3);
-    }
+    } 
     else { wr_err = write_file(outpath, data.get(), nbytes_img); }
 
     if (wr_err) {
         return mERROR("failed to save image");
     }
-    if (verbose) {
-        std::printf("Saved image to %s\n", poutpath);
-    }
+    
+    std::printf("Saved image to %s\n", poutpath);
     return 0;
 
 #undef DASHES
@@ -321,22 +313,26 @@ int main(int argc, char** argv)
     else {
         if (bv_report) {
             return mERROR("bv report expects .scene file");
-        }
-        if (tobin && !eswap) {
+        } else if (tobin && !eswap) {
             return mERROR("scene is already in binary format");
         }
+
         int e = read_file(inpath, Scbuf);
         if (e) { return e; }
 
-        // todo: may not always work, depends on endianness.
-        // An endian swap may be necessary even if not specified on cmdline
-        Scres.first = Scbuf.ptr[1];
-        Scres.second = Scbuf.ptr[2];
+        if (Scbuf.ptr[0] == Scene::MAGIC) {
+            Scres = { Scbuf.ptr[1], Scbuf.ptr[2] };
+        }
+        else if (Scbuf.ptr[0] == bswap32(Scene::MAGIC)) {
+            Scres = { bswap32(Scbuf.ptr[1]), bswap32(Scbuf.ptr[2]) };
+            eswap = true;
+        }
+        else return mERROR("missing magic number");
     }
 
     if (eswap) {
         for (uint i = 0; i < Scbuf.size; ++i) {
-            Scbuf.ptr[i] = bswap(Scbuf.ptr[i]);
+            Scbuf.ptr[i] = bswap32(Scbuf.ptr[i]);
         }
     }
 
@@ -346,11 +342,6 @@ int main(int argc, char** argv)
         err = raytrace(outpath, rthost, rtport, Scres, Scbuf, verbose);
     }
     else {
-        if (verbose) {
-            DECL_UTF8PATH_CSTR(outpath)
-            std::printf("Writing to file %s\n", poutpath);
-        }
-
         if (tobin) {
             err = write_file(outpath, Scbuf);
         } else if (tohdr) {
@@ -359,15 +350,18 @@ int main(int argc, char** argv)
         else if (!bv_report) {
             assert(false && "no output");
         }
+
+        if (!err) {
+            DECL_UTF8PATH_CSTR(outpath)
+            std::printf("Saved output to %s\n", poutpath);
+        }
     } 
     if (err) { return err; }
 
-    if (verbose) {
-        auto tend = chrono::high_resolution_clock::now();
-        std::cout << "Completed in ";
-        print_duration(std::cout, tend - tbeg);
-        std::cout << ".\n";
-    }
+    auto tend = chrono::high_resolution_clock::now();
+    std::cout << "Completed in ";
+    print_duration(std::cout, tend - tbeg);
+    std::cout << ".\n";
 
     return 0;
 }

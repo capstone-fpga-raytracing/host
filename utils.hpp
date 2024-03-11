@@ -163,7 +163,7 @@ constexpr float from_fixedpt(uint val)
     return float(int(val)) / (1 << 16);
 }
 
-constexpr uint bswap(uint v)
+constexpr uint bswap32(uint v)
 {
 #ifdef _MSC_VER
     return std::byteswap(v);
