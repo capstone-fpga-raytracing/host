@@ -16,11 +16,11 @@ Clone with `git clone --recursive https://github.com/capstone-team-2023844-fpga-
 - An executable is created in `/out/build/x64-Clang-Release/`. You can run this directly from the command line, or use the play button in VS (in this case, see `.vs/launch.vs.json` for cmdline options).
 
 ### Troubleshooting
-- See https://learn.microsoft.com/en-us/cpp/build/cmake-projects-in-visual-studio?view=msvc-170 if you have any issues.
-- If the `x64-Clang-` configs do not work, use the `x64-Debug` or `x64-Release` configs instead (these use MSVC).
+- See https://learn.microsoft.com/en-us/cpp/build/cmake-projects-in-visual-studio?view=msvc-170.
+- If the `x64-Clang-` configs do not work, use the `x64-Debug` or `x64-Release` configs instead.
 - You must be connected to the internet for the first build so CMake can fetch required dependencies.
 
-## Building on Linux/Mac/WSL
+## Building on Linux/Mac
 Install CMake from your package manager (on Mac you can use [Homebrew](https://brew.sh/) to install CMake).  
 Clone the repo then run the following in terminal:
 ```
@@ -31,6 +31,9 @@ cmake --build .
 ```
 Change `cmake ..` to ``cmake -DCMAKE_BUILD_TYPE=Debug ..`` to compile without optimizations.
 
+### Troubleshooting
+- You need a compiler with C++20 or C++23 support (g++ version 11 or higher).
+- Connecting to the FPGA does not work in WSL out of the box. [This might help.](https://learn.microsoft.com/en-us/windows/wsl/networking#mirrored-mode-networking)
 
 ## Running
 `./rthost --help` brings up a list of options:
