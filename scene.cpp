@@ -387,11 +387,10 @@ int Scene::read_objs(const std::vector<fs::path>& objpaths)
 
                 t.bb = get_tri_bbox(V, t.Vidx);
 
-                F.push_back(std::move(t));
+                F.push_back(t);
 
-                // It is highly likely that if one face is bad, all are bad.
-                // Put them all in one array to avoid iterating through all faces
-                // multiple times.
+                // It is likely that if normals are missing, materials are missing too.
+                // Put them all in one array to avoid iterating through all faces multiple times.
                 if (bad) [[unlikely]] {
                     badFidx.push_back(int(F.size() - 1));
                 }
@@ -563,16 +562,6 @@ uint Scene::nserial() const
     uint ret = 0;
     switch (m_serfmt)
     {
-    case serial_format::NoDuplicate:
-    
-        ret = nhdr_noduplicate + camera::nserial +
-            vnserial(BV) + vnserial(V) + vnserial(NV) +
-            vnserial(F) + vnserial(M) + vnserial(L);
-#if ENABLE_TEXTURES
-        ret += vnserial(UV);
-#endif
-        break;
-    
     case serial_format::Duplicate:
         ret = nhdr_duplicate + camera::nserial +
             vnserial(BV) +
@@ -580,6 +569,16 @@ uint Scene::nserial() const
             vnserial(L);
 #if ENABLE_TEXTURES
         ret += (uint(F.size()) * 3 * uv::nserial);
+#endif
+        break;
+
+    case serial_format::NoDuplicate:
+    
+        ret = nhdr_noduplicate + camera::nserial +
+            vnserial(BV) + vnserial(V) + vnserial(NV) +
+            vnserial(F) + vnserial(M) + vnserial(L);
+#if ENABLE_TEXTURES
+        ret += vnserial(UV);
 #endif
         break;
     }
@@ -601,6 +600,53 @@ void Scene::serialize(uint* p) const
      
     switch (m_serfmt)
     {
+    case serial_format::Duplicate:
+    {
+        uint off = nhdr_duplicate;
+        *p++ = off; off += camera::nserial;
+        *p++ = off; off += vnserial(BV);
+        *p++ = off; off += (uint(F.size()) * 3 * vec3::nserial);
+        *p++ = off; off += (uint(F.size()) * 3 * vec3::nserial);
+        *p++ = off; off += (uint(F.size()) * mat::nserial);
+        *p++ = off; off += vnserial(L);
+#if ENABLE_TEXTURES
+        * p++ = off; off += (uint(F.size()) * 3 * uv::nserial);
+#endif
+        C.serialize(p);
+        p += camera::nserial;
+
+        p = vserialize(BV, p);
+
+        for (size_t i = 0; i < F.size(); ++i) {
+            for (int j = 0; j < 3; ++j) {
+                V[F[i].Vidx[j]].serialize(p);
+                p += vec3::nserial;
+            }
+        }
+        for (size_t i = 0; i < F.size(); ++i) {
+            for (int j = 0; j < 3; ++j) {
+                NV[F[i].NVidx[j]].serialize(p);
+                p += vec3::nserial;
+            }
+        }
+        for (size_t i = 0; i < F.size(); ++i) {
+            M[F[i].matid].serialize(p);
+            p += mat::nserial;
+        }
+
+        p = vserialize(L, p);
+
+#if ENABLE_TEXTURES
+        for (size_t i = 0; i < F.size(); ++i) {
+            for (int j = 0; j < 3; ++j) {
+                UV[F[i].UVidx[j]].serialize(p);
+                p += uv::nserial;
+            }
+        }
+#endif
+        break;
+    }
+
     case serial_format::NoDuplicate:
     {
         uint off = nhdr_noduplicate;
@@ -611,10 +657,10 @@ void Scene::serialize(uint* p) const
         *p++ = off; off += (uint(F.size()) * 3);
         *p++ = off; off += (uint(F.size()) * 3);
         *p++ = off; off += uint(F.size());
-        *p++ = off; off += vnserial(M);      
+        *p++ = off; off += vnserial(M);
         *p++ = off; off += vnserial(L);
 #if ENABLE_TEXTURES
-        *p++ = off; off += vnserial(UV);
+        * p++ = off; off += vnserial(UV);
         *p++ = off; off += (uint(F.size()) * 3);
 #endif
         C.serialize(p);
@@ -644,51 +690,6 @@ void Scene::serialize(uint* p) const
 #endif
         break;
     }
-
-    case serial_format::Duplicate:
-        uint off = nhdr_duplicate;
-        *p++ = off; off += camera::nserial;
-        *p++ = off; off += vnserial(BV);
-        *p++ = off; off += (uint(F.size()) * 3 * vec3::nserial);
-        *p++ = off; off += (uint(F.size()) * 3 * vec3::nserial);
-        *p++ = off; off += (uint(F.size()) * mat::nserial);
-        *p++ = off; off += vnserial(L);
-#if ENABLE_TEXTURES
-        *p++ = off; off += (uint(F.size()) * 3 * uv::nserial);
-#endif
-        C.serialize(p);
-        p += camera::nserial;
-
-        p = vserialize(BV, p);
-
-        for (size_t i = 0; i < F.size(); ++i) {
-            for (int j = 0; j < 3; ++j) {
-                V[F[i].Vidx[j]].serialize(p); 
-                p += vec3::nserial;
-            }
-        }
-        for (size_t i = 0; i < F.size(); ++i) {
-            for (int j = 0; j < 3; ++j) {
-                NV[F[i].NVidx[j]].serialize(p);
-                p += vec3::nserial;
-            }
-        }
-        for (size_t i = 0; i < F.size(); ++i) {
-            M[F[i].matid].serialize(p);
-            p += mat::nserial;
-        }
-
-        p = vserialize(L, p);
-
-#if ENABLE_TEXTURES
-        for (size_t i = 0; i < F.size(); ++i) {
-            for (int j = 0; j < 3; ++j) {
-                UV[F[i].UVidx[j]].serialize(p);
-                p += uv::nserial;
-            }
-        }
-#endif
-        break;
     }
 }
 

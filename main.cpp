@@ -41,7 +41,7 @@ static int raytrace(const fs::path& outpath, std::string_view host, std::string_
     const uint nbytes_sc = uint(buf.size * 4);
     const uint nbytes_img = resn.first * resn.second * 3;
 
-    std::printf("Sending scene to FPGA...\n");
+    std::printf("Sending scene to FPGA at '%s'...\n", host.data());
     if (verbose) { std::printf(DASHES); }
     
     socket_t socket = TCP_connect2(host.data(), port.data(), verbose);
@@ -113,11 +113,14 @@ static void BV_report(const Scene& sc)
 
     // intersect every ray with every bounding volume and count intersection
     // "candidates" (triangles that cannot be eliminated by BVs)
-    size_t ncandtris = 0;
+    size_t total_candtris = 0, total_candbvs = 0;
+    size_t max_candtris = 0, max_candbvs = 0;
+    size_t nrays_inter = 0;
     for (uint i = 0; i < sc.R.second; ++i) 
     {
         for (uint j = 0; j < sc.R.first; ++j) 
         {
+            size_t candtris = 0, candbvs = 0;
             for (const bv& bv : sc.BV) 
             {
                 auto& bb = bv.bb;
@@ -143,9 +146,19 @@ static void BV_report(const Scene& sc)
                 }
 
                 if (t_exit >= t_entry && t_exit >= 0) {
-                    ncandtris += bv.ntris;
+                    candtris += bv.ntris;
+                    candbvs++;
                 }
             }
+            if (candbvs > 0) {
+                nrays_inter++;
+            }
+            max_candtris = std::max(max_candtris, candtris);
+            max_candbvs = std::max(max_candbvs, candbvs);
+
+            total_candtris += candtris;
+            total_candbvs += candbvs;
+
             rdir += incr_diru;
         }
         rdir -= (float(sc.R.first) * incr_diru); // reset
@@ -153,12 +166,18 @@ static void BV_report(const Scene& sc)
     }
 
     auto nrays = size_t(sc.R.first) * sc.R.second;
-    float candavg = float(ncandtris) / (sc.F.size() * nrays);
+    float candavg = float(total_candtris) / (sc.F.size() * nrays);
 
     std::cout << "----------- BV report -----------\n";
     std::cout << "Num BVs: " << sc.BV.size() << "\n";
     std::cout << "Percent tris eliminated: " << 100 * (1 - candavg) << "%\n";
-    std::cout << "Avg candidate tris per ray: " << float(ncandtris) / nrays << "\n";
+    std::cout << "Avg candidate tris per ray: " << float(total_candtris) / nrays << "\n";
+    std::cout << "Avg candidate BVs per ray: " << float(total_candbvs) / nrays << "\n";
+    std::cout << "Avg candidate tris per intersecting ray: " << float(total_candtris) / nrays_inter << "\n";
+    std::cout << "Avg candidate BVs per intersecting ray: " << float(total_candbvs) / nrays_inter << "\n";
+    std::cout << "Avg cand tris per cand BV: " << float(total_candtris) / total_candbvs << "\n";
+    std::cout << "Max candidate tris: " << max_candtris << "\n";
+    std::cout << "Max candidate BVs: " << max_candbvs << "\n";
     std::cout << "---------------------------------\n";
 }
 
@@ -191,23 +210,20 @@ static int to_hdr(const fs::path& outpath, BufWithSize<uint>& buf)
 }
 
 int main(int argc, char** argv)
-{   
-    // cxxopts is slow but is also very convenient.
+{
     cxxopts::Options opts("rthost", "FPGA raytracer host.");
     opts.add_options()
         ("h,help", "Show usage.")
-        ("i,in", "Input file (.scene or .bin).", cxxopts::value<std::string>(), "<file>")
-        ("o,out", "Output file (.bmp, .png, or .bin).", cxxopts::value<std::string>(), "<file>")
-        ("rt", "Raytrace scene on FPGA. Faster if scene is in binary format.",
-            cxxopts::value<std::string>()->implicit_value(RT_DEFAULTARGS), "<host>,<port>")
-        ("max-bv", "Max bounding volumes. Must be a power of 2.", cxxopts::value<uint>()->default_value("128"), "<uint>")
-        ("bv-report", "Report efficiency of bounding volumes (takes a few seconds).")
-        ("ser-fmt", "Serialization format.", cxxopts::value<std::string>()->default_value("dup"), "<dup|nodup>")
-        ("b,tobin", "Convert scene to binary format.")
+        ("i,in", "Scene to render (.scene or binary file).", cxxopts::value<std::string>(), "<file>")
+        ("o,out", "Output (.bmp, .png, or binary file).", cxxopts::value<std::string>(), "<file>")
+        ("dest", "FPGA network destination.", cxxopts::value<std::string>()->default_value(RT_DEFAULTARGS), "<host>,<port>")
+        ("max-bv", "Max bounding volumes. Must be a power of 2.", cxxopts::value<uint>()->default_value("128"), "<uint>")      
+        ("serfmt", "Serialization format.", cxxopts::value<std::string>()->default_value("dup"), "<dup|nodup>")
+        ("b,tobin", "Convert scene to .bin.")
         ("c,tohdr", "Convert scene to C header.")
-        ("e,eswap", "Swap endianness.")
+        ("bv-report", "Report on BV efficiency (might take a few seconds).")
         ("v,verbose", "Verbose mode.");
-        
+
     cxxopts::ParseResult args;
     try {
         args = opts.parse(argc, argv);
@@ -215,7 +231,7 @@ int main(int argc, char** argv)
     catch (std::exception& e) {
         return mERROR(e.what());
     }
-   
+
     if (args["help"].as<bool>()) {
         std::cout << opts.help();
         return 0;
@@ -227,59 +243,23 @@ int main(int argc, char** argv)
 
     bool tobin = args["tobin"].count() != 0;
     bool tohdr = args["tohdr"].count() != 0;
-    bool tofpga = args["rt"].count() != 0;
     bool bv_report = args["bv-report"].count() != 0;
-    
-    int tototal = int(tobin) + int(tohdr) + int(tofpga);
-    if (tototal == 0) {
-        if (!bv_report) { return mERROR("nothing to do"); }
-    }
-    else if (tototal > 1) {
+
+    int run_util = int(tobin) + int(tohdr) + int(bv_report);
+    if (run_util > 1) {
         return mERROR("more than one target");
     }
 
-    bool eswap = args["eswap"].as<bool>();
-    if (eswap && tohdr) {
-        return mERROR("cannot apply eswap when target " 
-            "is C header (makes no sense)");
-    }
-
-    if (tototal != 0 && bv_report) {
-        std::cout <<
-            "BV report takes a few seconds to generate. "
-            "Timing will not be accurate.\n";
-    }
-
-    auto& serfmtstr = args["ser-fmt"].as<std::string>();
-    bool dup = serfmtstr == "dup";
-    bool nodup = serfmtstr == "nodup";
-    serial_format serfmt = dup ?
-        serial_format::Duplicate : serial_format::NoDuplicate;
-
-    if (!dup && !nodup) {
-        return mERROR("invalid serialization format");
-    }
-   
-    fs::path inpath = args["in"].as<std::string>();
-
-    fs::path outpath;
-    bool has_outpath = args["out"].count() != 0;
-    if (tototal != 0 && !has_outpath) {
-        return mERROR("missing output file");
-    }
-    if (has_outpath) {
-        outpath = args["out"].as<std::string>();
-    }
-
+    bool run_rt = !run_util;
     std::string rthost, rtport;
-    if (tofpga) {
-        auto& rtargs = args["rt"].as<std::string>();
+    if (run_rt) {
+        auto& rtargs = args["dest"].as<std::string>();
 
         size_t sepoff = rtargs.find(',');
         if (sepoff == rtargs.npos) {
             rthost = rtargs;
             rtport = RT_DEFAULT_PORT;
-        } 
+        }
         else if (sepoff == 0) {
             return mERROR("missing FPGA hostname/ipaddr");
         }
@@ -288,6 +268,35 @@ int main(int argc, char** argv)
             rtport = rtargs.substr(sepoff + 1);
         }
     }
+    else if (args["dest"].count() != 0) {
+        return mERROR("option --dest is invalid");
+    }
+
+    fs::path inpath = args["in"].as<std::string>();
+    
+    bool needs_outpath = run_rt || tobin || tohdr;
+    bool has_outpath = args["out"].count() != 0;
+    if (needs_outpath && !has_outpath) {
+        return mERROR("missing output file");
+    }
+    else if (!needs_outpath && has_outpath) {
+        return mERROR("option --out is invalid");
+    }
+
+    fs::path outpath;
+    if (has_outpath) {
+        outpath = args["out"].as<std::string>(); 
+    }
+    
+    auto& serfmtstr = args["serfmt"].as<std::string>();
+    bool dup = serfmtstr == "dup";
+    bool nodup = serfmtstr == "nodup";
+    serial_format serfmt = dup ?
+        serial_format::Duplicate : serial_format::NoDuplicate;
+
+    if (!dup && !nodup) {
+        return mERROR("invalid serialization format");
+    }
 
     bool verbose = args["verbose"].count() != 0;
     uint max_bv = args["max-bv"].as<uint>();
@@ -295,7 +304,7 @@ int main(int argc, char** argv)
     // the real work begins
     auto tbeg = chrono::high_resolution_clock::now();
 
-    // ------------ Serialize or read serialized scene ------------ 
+    // ---------------- Read scene ----------------- 
     BufWithSize<uint> Scbuf;
     std::pair<uint, uint> Scres;
     if (inpath.extension() == ".scene")
@@ -313,49 +322,40 @@ int main(int argc, char** argv)
     else {
         if (bv_report) {
             return mERROR("bv report expects .scene file");
-        } else if (tobin && !eswap) {
-            return mERROR("scene is already in binary format");
         }
-
         int e = read_file(inpath, Scbuf);
         if (e) { return e; }
 
         if (Scbuf.ptr[0] == Scene::MAGIC) {
             Scres = { Scbuf.ptr[1], Scbuf.ptr[2] };
         }
-        else if (Scbuf.ptr[0] == bswap32(Scene::MAGIC)) {
-            Scres = { bswap32(Scbuf.ptr[1]), bswap32(Scbuf.ptr[2]) };
-            eswap = true;
+        else if (Scbuf.ptr[0] == bswap32(Scene::MAGIC)) {         
+            for (uint i = 0; i < Scbuf.size; ++i) {
+                Scbuf.ptr[i] = bswap32(Scbuf.ptr[i]);
+            }
+            Scres = { Scbuf.ptr[1], Scbuf.ptr[2] };
         }
         else return mERROR("missing magic number");
     }
 
-    if (eswap) {
-        for (uint i = 0; i < Scbuf.size; ++i) {
-            Scbuf.ptr[i] = bswap32(Scbuf.ptr[i]);
-        }
-    }
-
     // ------------ Do output ------------ 
     int err = 0;
-    if (tofpga) {
+    if (run_rt) {
         err = raytrace(outpath, rthost, rtport, Scres, Scbuf, verbose);
-    }
-    else {
+    } else {
         if (tobin) {
             err = write_file(outpath, Scbuf);
-        } else if (tohdr) {
+        } 
+        else if (tohdr) {
             err = to_hdr(outpath, Scbuf);
-        }
+        } 
         else if (!bv_report) {
             assert(false && "no output");
         }
-
-        if (!err) {
-            DECL_UTF8PATH_CSTR(outpath)
-            std::printf("Saved output to %s\n", poutpath);
+        if (!err && !bv_report) {
+            std::cout << "Saved output to " << outpath << "\n";
         }
-    } 
+    }
     if (err) { return err; }
 
     auto tend = chrono::high_resolution_clock::now();
