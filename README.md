@@ -42,20 +42,18 @@ FPGA raytracer host.
 Usage:
   rthost [OPTION...]
 
-  -h, --help                    Show usage.
-  -i, --in <file>               Input file (.scene or .bin).
-  -o, --out <file>              Output file (.bmp, .png, or .bin).
-      --rt [=<host>,<port>(=de1soclinux,50000)]
-                                Raytrace scene on FPGA. Faster if scene is
-                                in binary format.
-      --max-bv <uint>           Max bounding volumes. Must be a power of 2.
-                                (default: 128)
-      --bv-report               Report efficiency of bounding volumes
-                                (takes a few seconds).
-      --ser-fmt <dup|nodup>     Serialization format. (default: dup)
-  -b, --tobin                   Convert scene to binary format.
-  -c, --tohdr                   Convert scene to C header.
-  -v, --verbose                 Verbose mode.
+  -h, --help                Show usage.
+  -i, --in <file>           Scene to render (.scene or binary file).
+  -o, --out <file>          Output (.bmp, .png, or binary file).
+      --dest <host>,<port>  FPGA network destination. (default:
+                            de1soclinux,50000)
+      --max-bv <uint>       Max bounding volumes. Must be a power of 2.
+                            (default: 128)
+      --serfmt <dup|nodup>  Serialization format. (default: dup)
+  -b, --tobin               Convert scene to .bin.
+  -c, --tohdr               Convert scene to C header.
+      --bv-report           Report on BV efficiency (might take a few
+                            seconds).
+  -v, --verbose             Verbose mode.
 ```
-Example: `./rthost.exe --in ..\..\..\tests\jeep.scene --out jeep.png --rt=de1soclinux,50000 --verbose`.  
-Note that there is no space after --rt.
+Example: `./rthost --in tests/jeep.scene --out jeep.png`.
