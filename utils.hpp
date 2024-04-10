@@ -199,9 +199,14 @@ struct luts {
 template <typename T>
 constexpr bool luts<T>::is_ws[];
 
-// Fast whitespace check
+// Fast whitespace check, C-locale
 constexpr bool is_ws(char c) { 
     return luts<>::is_ws[static_cast<byte>(c)]; 
+}
+
+// fast to_upper, C-locale
+constexpr char to_upper(char c) {
+    return ('a' <= c && c <= 'z') ? c ^ 0x20 : c;
 }
 
 template <typename OStream, typename T>

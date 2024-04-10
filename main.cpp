@@ -183,7 +183,17 @@ static void BV_report(const Scene& sc)
 
 static int to_hdr(const fs::path& outpath, BufWithSize<uint>& buf)
 {
-    std::string out = "static const int bin[] = {";
+    std::string name = outpath.stem().string();
+    std::string hdrname = name;
+    for (char& c : hdrname) {
+        c = to_upper(c);
+    }
+    hdrname += "_H";
+
+    std::string out = 
+        "#ifndef " + hdrname + 
+        "\n#define " + hdrname + 
+        "\nstatic const int " + name + "[] = {";
 
     char strbuf[10] = { '0', 'x' };
     char* const begin = strbuf + 2;
@@ -204,7 +214,7 @@ static int to_hdr(const fs::path& outpath, BufWithSize<uint>& buf)
             out.append(", ");
         }
     }
-    out.append("\n};\n");
+    out.append("\n};\n#endif\n");
 
     return write_file(outpath, out.c_str(), out.length());
 }

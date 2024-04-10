@@ -180,6 +180,7 @@ int Scene::read_scenefile(const fs::path& scpath, std::vector<fs::path>& objpath
                         !parsenum3(line, w.x(), w.y(), w.z())) {
                         return scERROR("invalid uvw");
                     }
+                    u.normalize(); v.normalize(); w.normalize();
                     has_uvw = true;
                 }
                 else if (line.starts_with("focal_len "))
