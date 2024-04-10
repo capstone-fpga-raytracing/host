@@ -1,0 +1,19 @@
+obj
+jeep_v2.obj
+
+scene
+res 1920 1080
+
+camera
+eye 7.0827 -3.4167 7.4254
+uvw 1 1 0 -1 1 1.41421356 1 -1 1.41421356
+focal_len 5
+proj_size 3.6 2.7
+
+light
+pos 3.6746 2.0055 3.1325
+rgb 0.5 0.5 0.5
+
+light
+pos 2.569 -1.3458 3.1325
+rgb 0.35 0.35 0.35
