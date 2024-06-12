@@ -11,29 +11,25 @@ Clone with `git clone --recursive https://github.com/capstone-team-2023844-fpga-
 ## Building on Windows
 - Install Visual Studio Community 2022 with the following options:
   - Select the "Linux Development with C++" and "Desktop Development with C++" workloads in the installer.
-  - Under 'Individual components', select 'C++ Clang Compiler for Windows' and 'MSBuild support for LLVM (clang-cl) toolset'
-- Open the source folder in VS, select a configuration (`x64-Clang-Debug` for `-O0` or `x64-Clang-Release` for `-O3`) and click Build->Build All.
-- An executable is created in `/out/build/x64-Clang-Release/`. You can run this directly from the command line, or use the play button in VS (in this case, see `.vs/launch.vs.json` for cmdline options).
+  - If you prefer Clang over Microsoft's C++ compiler, then also select 'C++ Clang Compiler for Windows' and 'MSBuild support for LLVM (clang-cl) toolset' under 'Individual components'.
+- Open the source folder in VS, select desired configuration (`x64-Debug` or `x64-Release`) and click Build->Build All.
+- An executable is created in `/out/build/`. You can use this from the command line.
 
 ### Troubleshooting
-- See https://learn.microsoft.com/en-us/cpp/build/cmake-projects-in-visual-studio?view=msvc-170.
-- If the `x64-Clang-` configs do not work, use the `x64-Debug` or `x64-Release` configs instead.
-- You must be connected to the internet for the first build so CMake can fetch required dependencies.
+- See [here](https://learn.microsoft.com/en-us/cpp/build/cmake-projects-in-visual-studio?view=msvc-170) for any issues with CMake.
 
 ## Building on Linux/Mac
-Install CMake from your package manager (on Mac you can use [Homebrew](https://brew.sh/) to install CMake).  
-Clone the repo then run the following in terminal:
+Install CMake (On MacOS, you can use [Homebrew](https://brew.sh/) to install CMake). `cd` into the source directory and run the following:
 ```
-cd <clone-location>
 mkdir build && cd build
 cmake ..
 cmake --build .
 ```
-Change `cmake ..` to ``cmake -DCMAKE_BUILD_TYPE=Debug ..`` to compile without optimizations.
+Change `cmake ..` to ``cmake -DCMAKE_BUILD_TYPE=Debug ..`` if you want a debuggable executable.
 
 ### Troubleshooting
-- You need a compiler with C++20 or C++23 support (g++ version 11 or higher).
-- Connecting to the FPGA does not work in WSL out of the box. [This might help.](https://learn.microsoft.com/en-us/windows/wsl/networking#mirrored-mode-networking)
+- You need a compiler with C++20 or C++23 support (gcc version 11 or higher).
+- WSL Linux does not work out of the box. [This might help.](https://learn.microsoft.com/en-us/windows/wsl/networking#mirrored-mode-networking)
 
 ## Running
 `./rthost --help` brings up a list of options:
