@@ -25,7 +25,8 @@ mkdir build && cd build
 cmake ..
 cmake --build .
 ```
-Change `cmake ..` to ``cmake -DCMAKE_BUILD_TYPE=Debug ..`` if you want a debuggable executable.
+This produces a release build.
+Change `cmake ..` to ``cmake -DCMAKE_BUILD_TYPE=Debug ..`` if you want a debug build.
 
 ### Troubleshooting
 - You need a compiler with C++20 or C++23 support (gcc version 11 or higher).
